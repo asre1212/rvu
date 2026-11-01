@@ -1,0 +1,190 @@
+import { RATES, RULE_VERSION, STORAGE_KEY, TECHNIQUES, LABELS, calculate, formatRVU, parseBackup, mergeData, summarize, validDate } from './engine.js';
+const $ = id => document.getElementById(id);
+const localDate = (d = new Date()) => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+const dateLabel = (date, options) => new Date(date+'T12:00:00').toLocaleDateString('en-US',options);
+const emptyData = () => ({ app:'rvu-daily',schemaVersion:1,entries:[],tombstones:{} });
+const newId = () => crypto.randomUUID ? crypto.randomUUID() : Array.from(crypto.getRandomValues(new Uint8Array(16)),n=>n.toString(16).padStart(2,'0')).join('');
+let data = emptyData(), selectedDate = localDate(), month = selectedDate.slice(0,7), tab = 'journal';
+let draft = {type:'colon',lower:[],upper:[],quantity:1}, editId = null, dirty = false, pendingImport = null;
+let blockedStorage = false, rawStorage = null, waitingWorker = null, swRegistration = null, reloading = false, reloadNeeded = false, hadController = !!navigator.serviceWorker?.controller, installPrompt = null;
+let toastTimer, undoAction;
+function storageWarning(text) { $('storage-warning').textContent = text; $('storage-warning').hidden = false; }
+try { rawStorage = localStorage.getItem(STORAGE_KEY); if (rawStorage) data = parseBackup(rawStorage); }
+catch { blockedStorage = true; storageWarning('Saved data could not be read. It has not been overwritten. Export a recovery copy from Rules & backup before clearing website data.'); }
+function toast(message, undo = null) {
+  clearTimeout(toastTimer); $('toast-text').textContent=message; $('toast').hidden=false; undoAction=undo; $('toast-undo').hidden=!undo;
+  toastTimer=setTimeout(()=>{ $('toast').hidden=true; undoAction=null; },undo?10000:4500);
+}
+$('toast-undo').addEventListener('click',()=>{ const action=undoAction; $('toast').hidden=true; undoAction=null; action?.(); });
+function timestamp() {
+  const latest = Math.max(0,...data.entries.map(e=>Date.parse(e.updatedAt)),...Object.values(data.tombstones).map(Date.parse));
+  return new Date(Math.max(Date.now(),latest+1)).toISOString();
+}
+function saveData(next) {
+  if (blockedStorage) { toast('Storage is unavailable. Export a recovery copy first.'); return false; }
+  try {
+    const current = localStorage.getItem(STORAGE_KEY);
+    const merged = current ? mergeData(parseBackup(current),next) : next;
+    localStorage.setItem(STORAGE_KEY,JSON.stringify(merged));
+    data=merged; $('storage-warning').hidden=true; render(); return true;
+  } catch (e) { storageWarning('Could not save this change. Your previous entries are intact. Export a backup and check available device storage.'); toast('Entry was not saved.'); return false; }
+}
+window.addEventListener('storage',event=>{
+  if(event.key!==STORAGE_KEY)return;
+  try { data=event.newValue?parseBackup(event.newValue):emptyData(); render(); } catch { storageWarning('Another tab changed stored data to an unreadable format. Export a backup before continuing.'); blockedStorage=true; }
+});
+function monthLabel() { return dateLabel(month+'-01',{month:'long',year:'numeric'}); }
+function setTab(next) {
+  tab=next; $('journal-view').hidden=next!=='journal'; $('averages-view').hidden=next!=='averages';
+  for(const kind of ['journal','averages']) { const button=$(kind+'-tab'); button.classList.toggle('active',kind===next); if(kind===next)button.setAttribute('aria-current','page');else button.removeAttribute('aria-current'); }
+  renderAverages();
+}
+$('journal-tab').addEventListener('click',()=>setTab('journal'));
+$('averages-tab').addEventListener('click',()=>setTab('averages'));
+function pickDate(date) {
+  if(!validDate(date))return;
+  if(editId && date!==selectedDate && !confirm('Discard the unsaved edit and change day?')){ $('entry-date').value=selectedDate; return; }
+  if(editId && date!==selectedDate) resetDraft();
+  selectedDate=date; month=date.slice(0,7); render();
+}
+$('entry-date').addEventListener('change',e=>pickDate(e.target.value));
+for(const [id,delta] of [['previous-month',-1],['next-month',1]])$(id).addEventListener('click',()=>{
+  const d = new Date(month+'-15T12:00:00');d.setMonth(d.getMonth()+delta);month=localDate(d).slice(0,7);renderCalendar();renderDaily();renderAverages();
+});
+$('today-button').addEventListener('click',()=>pickDate(localDate()));
+function renderCalendar() {
+  $('month-label').textContent=monthLabel();
+  const first=new Date(month+'-01T12:00:00'), length=new Date(first.getFullYear(),first.getMonth()+1,0).getDate();
+  const totals=new Map(summarize(data.entries,month).rows.map(row=>[row.date,row]));
+  const container=$('calendar');container.replaceChildren();
+  for(let i=0;i<first.getDay();i++)container.append(document.createElement('span'));
+  for(let day=1;day<=length;day++) {
+    const date=`${month}-${String(day).padStart(2,'0')}`, row=totals.get(date), button=document.createElement('button');
+    button.type='button';button.className='calendar-day'+(row?' has-entries':'')+(date===selectedDate?' selected':'')+(date===localDate()?' today':'');
+    button.setAttribute('aria-label',`${dateLabel(date,{month:'long',day:'numeric',year:'numeric'})}${row?`, ${formatRVU(row.units)} wRVUs`:`, no entries`}`);
+    button.setAttribute('aria-pressed',String(date===selectedDate));
+    const n=document.createElement('span');n.textContent=day;button.append(n);
+    if(row){const value=document.createElement('small');value.textContent=formatRVU(row.units);button.append(value);}
+    button.addEventListener('click',()=>pickDate(date));container.append(button);
+  }
+}
+function resetDraft() { draft={type:draft.type,lower:[],upper:[],quantity:1};editId=null;dirty=false;renderForm();considerUpdate(); }
+document.querySelectorAll('[data-type]').forEach(button=>button.addEventListener('click',()=>{
+  draft.type=button.dataset.type;
+  if(draft.type==='colon')draft.upper=[];if(draft.type==='egd')draft.lower=[];
+  dirty=true;renderForm();
+}));
+document.querySelectorAll('[data-tech]').forEach(button=>button.addEventListener('click',()=>{
+  const {side,tech}=button.dataset;draft[side]=draft[side].includes(tech)?draft[side].filter(k=>k!==tech):[...draft[side],tech];dirty=true;renderForm();
+}));
+function quantityChange(value) { draft.quantity=value;dirty=true;renderCalculation(); }
+$('quantity').addEventListener('input',e=>quantityChange(Number(e.target.value)));
+for(const [id,delta] of [['quantity-minus',-1],['quantity-plus',1]])$(id).addEventListener('click',()=>{
+  const n=Math.min(100,Math.max(1,(Number.isInteger(draft.quantity)?draft.quantity:1)+delta));$('quantity').value=n;quantityChange(n);
+});
+function renderForm() {
+  $('form-title').textContent=editId?'Edit entry':'Add a case';$('cancel-edit').hidden=!editId;
+  $('save-entry').textContent=editId?'Save changes':'+ Add case';
+  document.querySelectorAll('[data-type]').forEach(b=>b.setAttribute('aria-pressed',String(b.dataset.type===draft.type)));
+  document.querySelectorAll('[data-tech]').forEach(b=>b.setAttribute('aria-pressed',String(draft[b.dataset.side].includes(b.dataset.tech))));
+  $('lower-field').hidden=draft.type==='egd';$('upper-field').hidden=draft.type==='colon';$('quantity').value=draft.quantity;
+  const multiple=draft.lower.length>1||draft.upper.length>1;
+  $('selection-hint').textContent=multiple?'Multiple techniques assume separate lesions. EMR includes its own biopsy/snare.':'No selection = diagnostic procedure.';
+  renderCalculation();
+}
+function renderCalculation() {
+  const valid=Number.isInteger(draft.quantity)&&draft.quantity>=1&&draft.quantity<=100;
+  $('save-entry').disabled=!valid||blockedStorage;$('quantity-minus').disabled=draft.quantity<=1;$('quantity-plus').disabled=draft.quantity>=100;
+  const result=calculate({...draft,quantity:valid?draft.quantity:1});
+  $('preview-total').replaceChildren();const text=document.createTextNode(valid?formatRVU(result.totalUnits):'—');const small=document.createElement('small');small.textContent='wRVUs';$('preview-total').append(text,small);
+  const lines=$('calculation-lines');lines.replaceChildren();
+  for(const side of result.sides){
+    const p=document.createElement('p');p.textContent=`${LABELS[side.side]}: `+side.lines.map(l=>`${l.code} ${LABELS[l.key]} ${formatRVU(l.units)} × ${l.factor*100}%`).join(' + ')+` = ${(side.units/10000).toFixed(3).replace(/0$/,'')} wRVUs`;
+    lines.append(p);
+    if(result.sides.length>1){const p=document.createElement('p');p.textContent=`${LABELS[side.side]} combo credit: ${side.factor*100}% → ${(side.creditedUnits/10000).toFixed(4).replace(/0+$/,'').replace(/\.$/,'')} wRVUs`;lines.append(p);}
+  }
+  if(draft.quantity>1){const p=document.createElement('p');p.textContent=`${draft.quantity} identical cases × ${(result.units/10000).toFixed(4).replace(/0+$/,'').replace(/\.$/,'')} = ${formatRVU(result.totalUnits)} wRVUs`;lines.append(p);}
+}
+$('cancel-edit').addEventListener('click',()=>{resetDraft();toast('Edit cancelled.');});
+$('entry-form').addEventListener('submit',event=>{
+  event.preventDefault();if(!Number.isInteger(draft.quantity)||draft.quantity<1||draft.quantity>100)return;
+  const entry={...draft,lower:[...draft.lower],upper:[...draft.upper],date:selectedDate,id:editId??newId(),ruleVersion:RULE_VERSION,updatedAt:timestamp()};
+  const next={...data,entries:[...data.entries.filter(e=>e.id!==entry.id),entry],tombstones:{...data.tombstones}};
+  delete next.tombstones[entry.id];
+  const wasEdit=!!editId;
+  if(saveData(next)){resetDraft();toast(wasEdit?'Entry updated.':`${entry.quantity===1?'Case':entry.quantity+' cases'} saved · ${formatRVU(calculate(entry).totalUnits)} wRVUs`);}
+});
+function sideDescription(side,keys){return `${side}: ${keys.length?keys.map(k=>LABELS[k]).join(' + '):'Diagnostic'}`;}
+function renderEntries(){
+  const entries=data.entries.filter(e=>e.date===selectedDate).sort((a,b)=>a.updatedAt.localeCompare(b.updatedAt));
+  const total=entries.reduce((n,e)=>n+calculate(e).totalUnits,0), cases=entries.reduce((n,e)=>n+e.quantity,0);
+  $('selected-total').textContent=formatRVU(total);$('selected-day-label').textContent=dateLabel(selectedDate,{weekday:'short',month:'short',day:'numeric'});$('entry-date').value=selectedDate;$('day-case-count').textContent=cases;
+  const container=$('day-entries');container.replaceChildren();
+  if(!entries.length){container.innerHTML='<div class="empty-state"><strong>A fresh page for the day.</strong>Add your first case above.</div>';return;}
+  entries.forEach(e=>{
+    const row=document.createElement('article');row.className='entry-row';const info=document.createElement('div');const title=document.createElement('h3');title.textContent=LABELS[e.type]+(e.quantity>1?` × ${e.quantity}`:'');info.append(title);
+    for(const [side,keys] of [[e.type!=='egd'?'Lower':null,e.lower],[e.type!=='colon'?'Upper':null,e.upper]])if(side){const p=document.createElement('p');p.textContent=sideDescription(side,keys);info.append(p);}
+    const end=document.createElement('div');end.className='entry-end';const value=document.createElement('div');value.className='entry-value';value.textContent=formatRVU(calculate(e).totalUnits);const small=document.createElement('small');small.textContent='wRVUs';value.append(small);end.append(value);
+    const actions=document.createElement('div');actions.className='entry-actions';
+    const edit=document.createElement('button');edit.type='button';edit.textContent='✎';edit.setAttribute('aria-label',`Edit ${LABELS[e.type]} entry`);edit.addEventListener('click',()=>{editId=e.id;draft={type:e.type,lower:[...e.lower],upper:[...e.upper],quantity:e.quantity};dirty=true;renderForm();$('entry-form').scrollIntoView({behavior:'smooth',block:'center'});});
+    const del=document.createElement('button');del.type='button';del.textContent='×';del.setAttribute('aria-label',`Delete ${LABELS[e.type]} entry`);del.addEventListener('click',()=>{
+      const deleted={...e,lower:[...e.lower],upper:[...e.upper]};const next={...data,entries:data.entries.filter(x=>x.id!==e.id),tombstones:{...data.tombstones,[e.id]:timestamp()}};
+      if(saveData(next)){if(editId===e.id)resetDraft();toast('Entry deleted.',()=>{deleted.updatedAt=timestamp();const next={...data,entries:[...data.entries,deleted],tombstones:{...data.tombstones}};delete next.tombstones[e.id];if(saveData(next))toast('Entry restored.');});}
+    });actions.append(edit,del);end.append(actions);row.append(info,end);container.append(row);
+  });
+}
+function renderRows(id,rows){
+  const body=$(id);body.replaceChildren();
+  if(!rows.length){body.innerHTML='<tr class="table-empty"><td colspan="3">No entries in this period yet.</td></tr>';return;}
+  rows.forEach(row=>{const tr=document.createElement('tr'),date=document.createElement('td'),button=document.createElement('button');button.className='text-button';button.textContent=dateLabel(row.date,{month:'short',day:'numeric',year:'numeric'});button.addEventListener('click',()=>{pickDate(row.date);setTab('journal');window.scrollTo({top:0,behavior:'smooth'});});date.append(button);const cases=document.createElement('td');cases.textContent=row.cases;const rvu=document.createElement('td');rvu.textContent=formatRVU(row.units);tr.append(date,cases,rvu);body.append(tr);});
+}
+function renderDaily(){ $('daily-month').textContent=monthLabel();renderRows('daily-totals',summarize(data.entries,month).rows); }
+function renderAverages(){
+  const selectedMonth=$('average-period').value==='month'?month:'';const summary=summarize(data.entries,selectedMonth);
+  $('average-period-label').textContent=selectedMonth?monthLabel():'All saved entries';$('average-value').textContent=summary.days?formatRVU(summary.averageUnits):'—';$('average-total').textContent=formatRVU(summary.units);$('average-days').textContent=summary.days;$('average-cases').textContent=`${summary.cases} case${summary.cases===1?'':'s'}`;
+  $('average-equation').textContent=summary.days?`${formatRVU(summary.units)} ÷ ${summary.days} logged day${summary.days===1?'':'s'}`:'Empty days excluded';renderRows('average-table',summary.rows);
+  const trend=$('trend');trend.replaceChildren();const days=summary.rows.slice(0,14).reverse(),max=Math.max(1,...days.map(d=>d.units));
+  if(!days.length){trend.innerHTML='<div class="empty-state">Your daily totals will appear here.</div>';return;}
+  days.forEach(day=>{const column=document.createElement('div');column.className='bar-column';column.setAttribute('aria-label',`${day.date}: ${formatRVU(day.units)} wRVUs`);const track=document.createElement('div');track.className='bar-track';const bar=document.createElement('div');bar.className='bar';bar.style.height=`${day.units/max*100}%`;const value=document.createElement('small');value.textContent=formatRVU(day.units);bar.append(value);track.append(bar);const date=document.createElement('span');date.textContent=dateLabel(day.date,{month:'numeric',day:'numeric'});column.append(track,date);trend.append(column);});
+}
+$('average-period').addEventListener('change',renderAverages);
+function render(){renderCalendar();renderEntries();renderDaily();renderAverages();}
+function download(content,type,name){const blob=new Blob([content],{type}),url=URL.createObjectURL(blob),link=document.createElement('a');link.href=url;link.download=name;document.body.append(link);link.click();link.remove();setTimeout(()=>URL.revokeObjectURL(url),30000);}
+$('export-json').addEventListener('click',()=>{
+  if(blockedStorage&&rawStorage){download(rawStorage,'application/json',`rvu-daily-recovery-${localDate()}.json`);return;}
+  download(JSON.stringify({...data,exportedAt:new Date().toISOString()},null,2),'application/json',`rvu-daily-backup-${localDate()}.json`);$('backup-status').textContent=`Exported ${data.entries.length} saved entries. Keep this file to restore or transfer phones.`;
+});
+$('export-csv').addEventListener('click',()=>{const rows=summarize(data.entries).rows;download('Date,Cases,Colonoscopy cases,EGD cases,Combined cases,Work RVUs\r\n'+rows.map(r=>[r.date,r.cases,r.colon,r.egd,r.combo,formatRVU(r.units)].join(',')).join('\r\n'),'text/csv',`rvu-daily-totals-${localDate()}.csv`);$('backup-status').textContent='Daily totals exported. Use the JSON backup for importing.';});
+$('import-json').addEventListener('click',()=>$('import-file').click());
+$('import-file').addEventListener('change',async event=>{
+  const file=event.target.files?.[0];event.target.value='';if(!file)return;
+  try { if(file.size>10*1024*1024)throw new Error('Backup is too large (maximum 10 MB).');pendingImport=parseBackup(await file.text());const result=mergeData(data,pendingImport);const days=summarize(result.entries).days;
+    $('import-summary').textContent=`This backup contains ${pendingImport.entries.length} saved entries. After merging: ${result.entries.length} entries across ${days} logged days.`;$('import-dialog').showModal();
+  } catch(error){pendingImport=null;$('backup-status').textContent=error.message;}
+});
+$('cancel-import').addEventListener('click',()=>{pendingImport=null;$('import-dialog').close();});
+$('confirm-import').addEventListener('click',()=>{if(!pendingImport)return;const next=mergeData(data,pendingImport);if(saveData(next)){$('backup-status').textContent=`Import complete: ${data.entries.length} entries, ${summarize(data.entries).days} logged days.`;pendingImport=null;$('import-dialog').close();toast('Backup merged.');}});
+$('settings-open').addEventListener('click',()=>$('settings-dialog').showModal());$('settings-close').addEventListener('click',()=>$('settings-dialog').close());
+const rateContainer=$('rates-table'),rateTable=document.createElement('table');rateTable.innerHTML='<thead><tr><th>Procedure</th><th>CPT</th><th>wRVUs</th></tr></thead>';const rateBody=document.createElement('tbody');
+for(const side of ['colon','egd'])for(const key of ['diagnostic',...TECHNIQUES]){const row=document.createElement('tr');for(const text of [`${LABELS[side]} · ${LABELS[key]}`,RATES[side][key].code,formatRVU(RATES[side][key].units)]){const cell=document.createElement('td');cell.textContent=text;row.append(cell);}rateBody.append(row);}rateTable.append(rateBody);rateContainer.append(rateTable);
+function considerUpdate(){
+  if(reloadNeeded){if(dirty||editId||pendingImport){$('update-notice').hidden=false;return;}if(!reloading){reloading=true;location.reload();}return;}
+  if(!waitingWorker)return;
+  if(dirty||editId||pendingImport){$('update-notice').hidden=false;return;}
+  waitingWorker.postMessage({type:'SKIP_WAITING'});
+}
+$('apply-update').addEventListener('click',()=>{if((dirty||editId||pendingImport)&&!confirm('Apply the update? Saved entries are safe, but your unsaved form or pending import will be cleared.'))return;if(reloadNeeded){location.reload();return;}waitingWorker?.postMessage({type:'SKIP_WAITING'});});
+if('serviceWorker'in navigator){
+  navigator.serviceWorker.addEventListener('controllerchange',()=>{if(!hadController){hadController=true;return;}reloadNeeded=true;considerUpdate();});
+  navigator.serviceWorker.register('./sw.js',{scope:'./',updateViaCache:'none'}).then(reg=>{
+    swRegistration=reg;if(reg.waiting){waitingWorker=reg.waiting;considerUpdate();}
+    reg.addEventListener('updatefound',()=>{const worker=reg.installing;worker?.addEventListener('statechange',()=>{if(worker.state==='installed'){if(navigator.serviceWorker.controller){waitingWorker=worker;considerUpdate();}else worker.postMessage({type:'SKIP_WAITING'});}});});
+    reg.update().catch(()=>{});
+  }).catch(()=>{$('update-status').textContent='Offline installation is unavailable in this browser. Saved entries still work.';});
+  document.addEventListener('visibilitychange',()=>{if(!document.hidden){swRegistration?.update().catch(()=>{});considerUpdate();}});
+}
+$('check-update').addEventListener('click',async()=>{if(!swRegistration){$('update-status').textContent='Updates require an HTTPS browser that supports service workers.';return;}$('update-status').textContent='Checking…';try{await swRegistration.update();if(swRegistration.waiting){waitingWorker=swRegistration.waiting;considerUpdate();$('update-status').textContent='Update ready.';}else $('update-status').textContent=swRegistration.installing?'Downloading the new version…':'Up to date · v1.0.0';}catch{$('update-status').textContent='Could not check while offline. The app will retry when opened online.';}});
+window.addEventListener('beforeinstallprompt',event=>{event.preventDefault();installPrompt=event;$('install-app').hidden=false;});
+$('install-app').addEventListener('click',async()=>{await installPrompt?.prompt();installPrompt=null;$('install-app').hidden=true;});
+window.addEventListener('appinstalled',()=>{$('install-app').hidden=true;});
+render();renderForm();
