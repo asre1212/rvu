@@ -9,3 +9,4 @@
 @media(max-width:760px){.activity-stats{grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}.activity-stats .stat{padding:17px 14px}.activity-stats .stat span{min-height:33px}.activity-stats .stat strong{font-size:29px}.activity-stats .stat small{font-size:10px}.schedule-totals{align-items:flex-start}.schedule-totals span{max-width:50%}.schedule-totals strong{display:block}.schedule-form .form-top{align-items:flex-start}}
 
 .compensation-panel{margin:20px 0 28px}.compensation-panel th:last-child,.compensation-panel td:last-child{text-align:right}.compensation-note{margin-top:14px;font-size:10px;line-height:1.6}
+.fixed-rate-table{margin-top:24px}
