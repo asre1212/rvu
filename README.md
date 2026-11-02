@@ -8,31 +8,46 @@ Choose a calendar day, select **Colonoscopy**, **EGD**, or **Colon / EGD**, then
 
 The Journal shows daily totals. The Averages tab divides total RVUs by **unique dates containing saved entries only**. Blank dates, weekends without entries, and holidays without entries are excluded. Deleting the final entry for a date removes that date from the denominator.
 
-## Calculation model
+## Work-RVU calculation model (v1.1.0)
 
-This app implements the user's explicitly requested **custom productivity rules**, not a Medicare payment calculation or a guarantee of employer wRVU credit:
+The app tracks the **unadjusted sum of work RVUs for separately reportable codes**. It does not estimate Medicare payment or apply employer-specific credit adjustments.
 
-1. Within each scope, the highest selected technique is credited at 100%; other selected techniques at 50%.
-2. Thus colon snare + forceps = 4.46 + 0.5 × 3.47 = **6.195** wRVUs.
-3. For combined colon/EGD, calculate upper and lower independently, then credit the higher subtotal at 100% and the lower at 50%. Upper is not automatically the lower-valued side.
-4. Multiple techniques assume distinct lesions. EMR includes biopsy/snare on its own lesion; do not select these again for that same lesion.
-5. Diagnostic code values are included in therapeutic values and are not added again.
-6. Integer ten-thousandths retain precision, including nested 50% adjustments. UI totals use two decimal places.
+1. Each completed scope has one diagnostic code only when no intervention is selected. Therapeutic codes already include the diagnostic work.
+2. Each separately reportable technique counts once per scope at its full work RVU, irrespective of lesion count. Quantity means identical patient encounters, never the number of biopsies/polyps.
+3. Upper and lower codes add in full; no 50% reduction and no diagnostic-base subtraction.
+4. Selecting multiple techniques is the user's assertion that they were performed on **separate lesions/sites** and are independently reportable. All selected techniques count automatically; no extra lesion selector or confirmation is shown.
+5. For a single lesion, enter only the final technique: snare includes its biopsy; EMR includes its biopsy and snare. Do not select those components again for the same lesion. Documentation and appropriate modifiers remain necessary when reporting separate services.
+6. Upper and lower selections are independent, including biopsy in both scopes.
+7. Averages divide by distinct dates with entries only. Integer arithmetic retains exact hundredths until display.
 
-| Procedure | Diagnostic | Forceps bx | Snare | EMR |
+| Procedure | Diagnostic | Cold forceps biopsy | Snare | EMR |
 |---|---:|---:|---:|---:|
 | Colonoscopy | 3.18 (45378) | 3.47 (45380) | 4.46 (45385) | 5.89 (45390) |
 | EGD | 2.04 (43235) | 2.33 (43239) | 3.38 (43251) | 4.75 (43254) |
 
-Rates verified from the CMS October 2026 RVU26D download, `PPRRVU2026_Oct_nonQPP.csv`, work RVU column, unmodified procedures. Rule version `2026-custom-50-v1` is stored with entries and validated on import. Future rule changes must preserve historical calculation versions or include an explicit migration.
+| Example | Work RVUs |
+|---|---:|
+| EGD biopsy + colon biopsy | 5.80 |
+| Colon biopsy + snare, separate lesions | 7.93 |
+| Same-lesion biopsy/snare: select snare only | 4.46 |
+| Same-lesion EMR with biopsy/snare: select EMR only | 5.89 |
+| EGD biopsy + colon snare and separate biopsy | 10.26 |
+
+Scope: completed diagnostic or therapeutic EGD/colonoscopy, cold forceps, hot/cold snare and EMR. This is not a complete claims encoder. Screening HCPCS codes, incomplete procedures/modifiers 52/53, hot biopsy forceps, sedation and interventions not listed above are outside this model. Do not use a diagnostic entry to represent an incomplete examination. Rates are pinned to 2026, rather than silently selecting a different year from the date.
 
 References reviewed November 1, 2026:
 
-- [CMS RVU26D](https://www.cms.gov/medicare/payment/fee-schedules/physician/pfs-relative-value-files/rvu26d)
-- [Noridian multiple endoscopy payment rules](https://med.noridianmedicare.com/web/jfb/specialties/surgery/minor-surgery-and-endoscopies)
-- [CMS separate-lesion modifier guidance](https://www.cms.gov/medicare-coverage-database/view/article.aspx?articleId=53399)
+- [CMS October 2026 RVU26D](https://www.cms.gov/medicare/payment/fee-schedules/physician/pfs-relative-value-files/rvu26d): work values from the non-QP file, unmodified codes. Cross-checked against the [2026 procedural payment guide](https://www.watchman.com/content/dam/bostonscientific/Reimbursement/Gastroenterology/pdf/GI_Procedural_Reimbursement_Guide.pdf).
+- [CMS 2026 NCCI Chapter VI](https://www.cms.gov/files/document/06-chapter6-ncci-medicare-policy-manual-2026-final.pdf): diagnostic bundling, one unit per repeated endoscopic technique, separate lesions.
+- [CMS modifier 59 GI guidance](https://www.cms.gov/medicare-coverage-database/view/article.aspx?articleId=53399): biopsy/snare of separate lesions.
+- [ASGE EMR report](https://www.asge.org/docs/default-source/education/Technology_Reviews/doc-endoscopic_mucosal_resection_aip.pdf): EMR includes same-lesion biopsy and snare. Used only for component bundling, not historical payment or sedation advice.
+- [Noridian payment rules](https://med.noridianmedicare.com/web/jfb/specialties/surgery/minor-surgery-and-endoscopies): payment adjustments are deliberately excluded from this work-RVU sum.
 
-Medicare same-family endoscopy payment subtracts the diagnostic base from a secondary code; this differs from the requested flat 50% tracking rule. Medicare payment reductions do not themselves establish an employer's productivity-credit policy.
+### Existing data and migration
+
+Rule version is `2026-work-rvu-v2`; backup schema is 2, with the storage key unchanged. Version-1 backups remain importable. Parsing preserves IDs, dates, quantities, timestamps and tombstones, and recalculates full work totals. The user's separate-lesion assumption applies to multiple techniques in **existing and new entries**; there is no review queue or extra entry step.
+
+Before first converting on-device version-1 data, the app stores the exact original JSON under `rvu-daily-before-work-rvu-v2`, available via **Export pre-update backup**. If this backup or migration cannot be written, saving is blocked to protect existing data. Importing an older backup does not overwrite newer edits. Old app versions reject schema 2 rather than modifying it with the former rule.
 
 ## Storage and backup
 
@@ -58,3 +73,4 @@ npm run check
 Deploy the contents of `dist/`. All asset paths are relative, so the app also supports a GitHub Pages repository subpath such as `/rvu/`.
 
 The included GitHub Actions workflow tests and publishes every push to `main`. Enable **Settings → Pages → Source: GitHub Actions** once. App updates then deploy automatically.
+

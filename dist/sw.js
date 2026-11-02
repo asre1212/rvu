@@ -1,4 +1,4 @@
-const VERSION = 'a94046e4a6913246';
+const VERSION = 'b8b2778cec87b3f5';
 const PREFIX = 'rvu-daily-shell-';
 const CACHE = PREFIX + VERSION;
 const FILES = ['./','./index.html','./styles.css','./app.js','./engine.js','./manifest.webmanifest','./icon.svg','./icon-192.png','./icon-512.png'];
@@ -14,3 +14,4 @@ self.addEventListener('fetch', event => {
   // Serve a coherent app shell; the new worker swaps the whole version atomically.
   event.respondWith(caches.open(CACHE).then(async cache => (await cache.match(event.request, { ignoreSearch: true })) || fetch(event.request)));
 });
+
