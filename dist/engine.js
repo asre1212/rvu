@@ -1,6 +1,6 @@
 export const RULE_VERSION = '2026-work-rvu-v2';
 export const LEGACY_RULE_VERSION = '2026-custom-50-v1';
-export const SCHEMA_VERSION = 2;
+export const SCHEMA_VERSION = 3;
 export const STORAGE_KEY = 'rvu-daily-v1';
 export const RECOVERY_KEY = 'rvu-daily-before-work-rvu-v2';
 export const RATES = Object.freeze({
@@ -47,13 +47,20 @@ export function validateEntry(e) {
 export function parseBackup(text) {
   let data;
   try { data = JSON.parse(text); } catch { throw new Error('Choose a valid RVU Daily JSON backup.'); }
-  if (data?.app !== 'rvu-daily' || ![1,SCHEMA_VERSION].includes(data?.schemaVersion) || !Array.isArray(data.entries) || data.entries.length > 50000) throw new Error('This is not a supported RVU Daily backup.');
+  if (data?.app !== 'rvu-daily' || ![1,2,SCHEMA_VERSION].includes(data?.schemaVersion) || !Array.isArray(data.entries) || data.entries.length > 50000) throw new Error('This is not a supported RVU Daily backup.');
   const entries = data.entries.map(validateEntry);
   if (new Set(entries.map(e => e.id)).size !== entries.length) throw new Error('Backup contains duplicate entry IDs.');
   const tombstones = data.tombstones ?? {};
   if (!tombstones || typeof tombstones !== 'object' || Array.isArray(tombstones)) throw new Error('Invalid deleted-entry history.');
   for (const [id, stamp] of Object.entries(tombstones)) if (!/^[\w-]{1,100}$/.test(id) || typeof stamp !== 'string' || !Number.isFinite(Date.parse(stamp))) throw new Error('Invalid deleted-entry history.');
-  return { app:'rvu-daily', schemaVersion:SCHEMA_VERSION, entries, tombstones:{...tombstones} };
+  const schedules = data.schemaVersion < 3 ? [] : data.schedules;
+  const scheduleTombstones = data.schemaVersion < 3 ? {} : data.scheduleTombstones;
+  if (!Array.isArray(schedules) || schedules.length > 50000) throw new Error('Invalid daily schedules in backup.');
+  const checkedSchedules = schedules.map(validateSchedule);
+  if (new Set(checkedSchedules.map(s => s.date)).size !== checkedSchedules.length) throw new Error('Backup contains duplicate schedule dates.');
+  if (!scheduleTombstones || typeof scheduleTombstones !== 'object' || Array.isArray(scheduleTombstones)) throw new Error('Invalid deleted-schedule history.');
+  for (const [date, stamp] of Object.entries(scheduleTombstones)) if (!validDate(date) || typeof stamp !== 'string' || !Number.isFinite(Date.parse(stamp))) throw new Error('Invalid deleted-schedule history.');
+  return { app:'rvu-daily', schemaVersion:SCHEMA_VERSION, entries, tombstones:{...tombstones}, schedules:checkedSchedules, scheduleTombstones:{...scheduleTombstones} };
 }
 export function mergeData(current, incoming) {
   const tombstones = Object.assign(Object.create(null), current.tombstones);
@@ -61,7 +68,51 @@ export function mergeData(current, incoming) {
   const map = new Map(current.entries.map(e => [e.id,e]));
   for (const e of incoming.entries) if (!map.has(e.id) || Date.parse(e.updatedAt) > Date.parse(map.get(e.id).updatedAt)) map.set(e.id,e);
   for (const [id,e] of map) if (tombstones[id] && Date.parse(tombstones[id]) >= Date.parse(e.updatedAt)) map.delete(id);
-  return { app:'rvu-daily', schemaVersion:SCHEMA_VERSION, entries:[...map.values()], tombstones };
+  const scheduleTombstones = Object.assign(Object.create(null), current.scheduleTombstones);
+  for (const [date, stamp] of Object.entries(incoming.scheduleTombstones ?? {})) if (!scheduleTombstones[date] || Date.parse(stamp) > Date.parse(scheduleTombstones[date])) scheduleTombstones[date] = stamp;
+  const schedules = new Map((current.schedules ?? []).map(s => [s.date,s]));
+  for (const s of incoming.schedules ?? []) if (!schedules.has(s.date) || Date.parse(s.updatedAt) > Date.parse(schedules.get(s.date).updatedAt)) schedules.set(s.date,s);
+  for (const [date,s] of schedules) if (scheduleTombstones[date] && Date.parse(scheduleTombstones[date]) >= Date.parse(s.updatedAt)) schedules.delete(date);
+  return { app:'rvu-daily', schemaVersion:SCHEMA_VERSION, entries:[...map.values()], tombstones, schedules:[...schedules.values()], scheduleTombstones };
+}
+export function scheduledProcedures(patients, doubles) {
+  if (!Number.isInteger(patients) || patients < 0 || patients > 1000) throw new Error('Scheduled patients must be a whole number from 0 to 1,000.');
+  if (!Number.isInteger(doubles) || doubles < 0 || doubles > patients) throw new Error('Doubles must be a whole number between 0 and the scheduled patient count.');
+  return patients + doubles;
+}
+export function validateSchedule(s) {
+  if (!s || typeof s !== 'object' || !validDate(s.date) || typeof s.updatedAt !== 'string' || !Number.isFinite(Date.parse(s.updatedAt))) throw new Error('Invalid daily schedule in backup.');
+  scheduledProcedures(s.patients,s.doubles);
+  return {date:s.date,patients:s.patients,doubles:s.doubles,updatedAt:s.updatedAt};
+}
+// A double is one encounter with two completed scopes, regardless of technique count.
+// Missing schedules are unknown, not zero. Future dates can be excluded by the caller.
+export function analyzeActivity(entries, schedules = [], {month = '', through = ''} = {}) {
+  const included = date => (!month || date.startsWith(month)) && (!through || date <= through);
+  const days = new Map();
+  const dayFor = date => {
+    if (!days.has(date)) days.set(date,{date,units:0,cases:0,completedProcedures:0,colon:0,egd:0,doubles:0,scheduledPatients:null,scheduledDoubles:null,scheduledProcedures:null});
+    return days.get(date);
+  };
+  for (const s of schedules) if (included(s.date)) {
+    const day=dayFor(s.date);
+    day.scheduledPatients=s.patients;day.scheduledDoubles=s.doubles;day.scheduledProcedures=scheduledProcedures(s.patients,s.doubles);
+  }
+  for (const e of entries) if (included(e.date)) {
+    const day=dayFor(e.date), n=e.quantity;
+    day.cases+=n;day.units+=calculate(e).totalUnits;
+    if(e.type!=='egd')day.colon+=n;
+    if(e.type!=='colon')day.egd+=n;
+    if(e.type==='combo')day.doubles+=n;
+    day.completedProcedures+=n*(e.type==='combo'?2:1);
+  }
+  const rows=[...days.values()].sort((a,b)=>b.date.localeCompare(a.date));
+  const scheduleDays=rows.filter(d=>d.scheduledProcedures!==null).length;
+  const totals={cases:0,completedProcedures:0,colon:0,egd:0,doubles:0,scheduledPatients:0,scheduledDoubles:0,scheduledProcedures:0};
+  for(const row of rows)for(const key of Object.keys(totals))totals[key]+=row[key]??0;
+  const averages={};
+  for(const key of Object.keys(totals)){const count=key.startsWith('scheduled')?scheduleDays:rows.length;averages[key]=count?totals[key]/count:null;}
+  return {rows,days:rows.length,scheduleDays,totals,averages};
 }
 export function summarize(entries, month = '') {
   const days = new Map();

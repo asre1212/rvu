@@ -1,12 +1,13 @@
-import { RATES, RULE_VERSION, SCHEMA_VERSION, STORAGE_KEY, RECOVERY_KEY, TECHNIQUES, LABELS, validateEntry, calculate, formatRVU, parseBackup, mergeData, summarize, validDate } from './engine.js';
+import { RATES, RULE_VERSION, SCHEMA_VERSION, STORAGE_KEY, RECOVERY_KEY, TECHNIQUES, LABELS, validateEntry, validateSchedule, scheduledProcedures, analyzeActivity, calculate, formatRVU, parseBackup, mergeData, summarize, validDate } from './engine.js';
 const $ = id => document.getElementById(id);
 const localDate = (d = new Date()) => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
 const dateLabel = (date, options) => new Date(date+'T12:00:00').toLocaleDateString('en-US',options);
-const emptyData = () => ({ app:'rvu-daily',schemaVersion:SCHEMA_VERSION,entries:[],tombstones:{} });
+const emptyData = () => ({ app:'rvu-daily',schemaVersion:SCHEMA_VERSION,entries:[],tombstones:{},schedules:[],scheduleTombstones:{} });
 const blankDraft = type => ({type,lower:[],upper:[],quantity:1});
 const newId = () => crypto.randomUUID ? crypto.randomUUID() : Array.from(crypto.getRandomValues(new Uint8Array(16)),n=>n.toString(16).padStart(2,'0')).join('');
 let data = emptyData(), selectedDate = localDate(), month = selectedDate.slice(0,7), tab = 'journal';
 let draft = blankDraft('colon'), editId = null, dirty = false, pendingImport = null;
+let scheduleDirty = false, scheduleDate = null;
 let blockedStorage = false, rawStorage = null, waitingWorker = null, swRegistration = null, reloading = false, reloadNeeded = false, hadController = !!navigator.serviceWorker?.controller, installPrompt = null;
 let toastTimer, undoAction;
 function storageWarning(text) { $('storage-warning').textContent = text; $('storage-warning').hidden = false; }
@@ -28,7 +29,8 @@ function toast(message, undo = null) {
 }
 $('toast-undo').addEventListener('click',()=>{ const action=undoAction; $('toast').hidden=true; undoAction=null; action?.(); });
 function timestamp() {
-  const latest = Math.max(0,...data.entries.map(e=>Date.parse(e.updatedAt)),...Object.values(data.tombstones).map(Date.parse));
+  const stamps = [...data.entries.map(e=>e.updatedAt),...data.schedules.map(s=>s.updatedAt),...Object.values(data.tombstones),...Object.values(data.scheduleTombstones)];
+  const latest = stamps.reduce((n,s)=>Math.max(n,Date.parse(s)),0);
   return new Date(Math.max(Date.now(),latest+1)).toISOString();
 }
 function saveData(next) {
@@ -53,10 +55,11 @@ function setTab(next) {
 $('journal-tab').addEventListener('click',()=>setTab('journal'));
 $('averages-tab').addEventListener('click',()=>setTab('averages'));
 function pickDate(date) {
-  if(!validDate(date))return;
-  if(editId && date!==selectedDate && !confirm('Discard the unsaved edit and change day?')){ $('entry-date').value=selectedDate; return; }
+  if(!validDate(date))return false;
+  if((editId||scheduleDirty) && date!==selectedDate && !confirm('Discard the unsaved edit or schedule and change day?')){ $('entry-date').value=selectedDate; return false; }
   if(editId && date!==selectedDate) resetDraft();
-  selectedDate=date; month=date.slice(0,7); render();
+  if(date!==selectedDate)scheduleDirty=false;
+  selectedDate=date; month=date.slice(0,7); render();return true;
 }
 $('entry-date').addEventListener('change',e=>pickDate(e.target.value));
 for(const [id,delta] of [['previous-month',-1],['next-month',1]])$(id).addEventListener('click',()=>{
@@ -66,19 +69,67 @@ $('today-button').addEventListener('click',()=>pickDate(localDate()));
 function renderCalendar() {
   $('month-label').textContent=monthLabel();
   const first=new Date(month+'-01T12:00:00'), length=new Date(first.getFullYear(),first.getMonth()+1,0).getDate();
-  const totals=new Map(summarize(data.entries,month).rows.map(row=>[row.date,row]));
+  const totals=new Map(analyzeActivity(data.entries,data.schedules,{month}).rows.map(row=>[row.date,row]));
   const container=$('calendar');container.replaceChildren();
   for(let i=0;i<first.getDay();i++)container.append(document.createElement('span'));
   for(let day=1;day<=length;day++) {
     const date=`${month}-${String(day).padStart(2,'0')}`, row=totals.get(date), button=document.createElement('button');
     button.type='button';button.className='calendar-day'+(row?' has-entries':'')+(date===selectedDate?' selected':'')+(date===localDate()?' today':'');
-    button.setAttribute('aria-label',`${dateLabel(date,{month:'long',day:'numeric',year:'numeric'})}${row?`, ${formatRVU(row.units)} wRVUs`:`, no entries`}`);
+    button.setAttribute('aria-label',`${dateLabel(date,{month:'long',day:'numeric',year:'numeric'})}${row?`, ${row.completedProcedures} completed procedures, ${formatRVU(row.units)} wRVUs${row.scheduledProcedures!==null?`, ${row.scheduledProcedures} scheduled procedures`:''}`:`, no entries`}`);
     button.setAttribute('aria-pressed',String(date===selectedDate));
     const n=document.createElement('span');n.textContent=day;button.append(n);
-    if(row){const value=document.createElement('small');value.textContent=formatRVU(row.units);button.append(value);}
+    if(row){const value=document.createElement('small');value.textContent=row.cases?formatRVU(row.units):`${row.scheduledProcedures} sched.`;button.append(value);}
     button.addEventListener('click',()=>pickDate(date));container.append(button);
   }
 }
+function scheduleInput() {
+  if($('scheduled-patients').value.trim()===''||$('scheduled-doubles').value.trim()==='')throw new Error('Enter scheduled patients and doubles (0 if none).');
+  const patients=Number($('scheduled-patients').value),doubles=Number($('scheduled-doubles').value);
+  return {patients,doubles,procedures:scheduledProcedures(patients,doubles)};
+}
+function renderScheduleCalculation() {
+  let valid=false;
+  try {
+    const s=scheduleInput();valid=true;
+    $('scheduled-total').textContent=s.procedures;
+    $('schedule-equation').textContent=`${s.patients} patients + ${s.doubles} doubles = ${s.procedures} procedures`;
+    $('schedule-error').textContent='';
+  } catch(error) {
+    $('scheduled-total').textContent='—';$('schedule-equation').textContent='A double is one patient having an EGD + colonoscopy.';
+    $('schedule-error').textContent=scheduleDirty?error.message:'';
+  }
+  $('save-schedule').disabled=!valid||blockedStorage||!scheduleDirty;
+}
+function renderSchedule() {
+  const s=data.schedules.find(s=>s.date===selectedDate);
+  if(!scheduleDirty||scheduleDate!==selectedDate){
+    $('scheduled-patients').value=s?s.patients:'';$('scheduled-doubles').value=s?s.doubles:0;scheduleDate=selectedDate;
+  }
+  $('clear-schedule').hidden=!s;$('clear-schedule').disabled=blockedStorage;
+  $('schedule-save-status').textContent=scheduleDirty?'Unsaved changes':s?'Saved for this day':'No schedule saved';
+  const activity=analyzeActivity(data.entries.filter(e=>e.date===selectedDate));
+  $('completed-day-total').textContent=activity.totals.completedProcedures;
+  renderScheduleCalculation();
+}
+for(const id of ['scheduled-patients','scheduled-doubles'])$(id).addEventListener('input',()=>{scheduleDirty=true;renderSchedule();});
+$('schedule-form').addEventListener('submit',event=>{
+  event.preventDefault();
+  let s;try{const values=scheduleInput();s=validateSchedule({date:selectedDate,patients:values.patients,doubles:values.doubles,updatedAt:timestamp()});}catch(error){$('schedule-error').textContent=error.message;return;}
+  const next={...data,schedules:[...data.schedules.filter(x=>x.date!==selectedDate),s],scheduleTombstones:{...data.scheduleTombstones}};
+  delete next.scheduleTombstones[selectedDate];
+  if(saveData(next)){scheduleDirty=false;renderSchedule();toast('Daily schedule saved.');considerUpdate();}
+});
+$('clear-schedule').addEventListener('click',()=>{
+  const saved=data.schedules.find(s=>s.date===selectedDate);if(!saved)return;
+  const next={...data,schedules:data.schedules.filter(s=>s.date!==selectedDate),scheduleTombstones:{...data.scheduleTombstones,[selectedDate]:timestamp()}};
+  if(saveData(next)){
+    scheduleDirty=false;renderSchedule();
+    toast('Schedule cleared. Completed cases kept.',()=>{
+      const restored={...saved,updatedAt:timestamp()},next={...data,schedules:[...data.schedules.filter(s=>s.date!==saved.date),restored],scheduleTombstones:{...data.scheduleTombstones}};
+      delete next.scheduleTombstones[saved.date];if(saveData(next))toast('Schedule restored.');
+    });considerUpdate();
+  }
+});
 function resetDraft() { draft=blankDraft(draft.type);editId=null;dirty=false;renderForm();considerUpdate(); }
 document.querySelectorAll('[data-type]').forEach(button=>button.addEventListener('click',()=>{
   draft.type=button.dataset.type;
@@ -130,7 +181,7 @@ $('entry-form').addEventListener('submit',event=>{
 });
 function sideDescription(side,keys){return `${side}: ${keys.length?keys.map(k=>LABELS[k]).join(' + '):'Diagnostic'}`;}
 function openEntry(e) {
-  selectedDate=e.date;month=e.date.slice(0,7);editId=e.id;
+  if(!pickDate(e.date))return;editId=e.id;
   draft={type:e.type,lower:[...e.lower],upper:[...e.upper],quantity:e.quantity};
   dirty=true;setTab('journal');render();renderForm();$('entry-form').scrollIntoView({behavior:'smooth',block:'center'});
 }
@@ -153,48 +204,60 @@ function renderEntries(){
     });actions.append(edit,del);end.append(actions);row.append(info,end);container.append(row);
   });
 }
-function renderRows(id,rows){
+function renderRows(id,rows,detailed=false){
   const body=$(id);body.replaceChildren();
-  if(!rows.length){body.innerHTML='<tr class="table-empty"><td colspan="3">No entries in this period yet.</td></tr>';return;}
-  rows.forEach(row=>{const tr=document.createElement('tr'),date=document.createElement('td'),button=document.createElement('button');button.className='text-button';button.textContent=dateLabel(row.date,{month:'short',day:'numeric',year:'numeric'});button.addEventListener('click',()=>{pickDate(row.date);setTab('journal');window.scrollTo({top:0,behavior:'smooth'});});date.append(button);const cases=document.createElement('td');cases.textContent=row.cases;const rvu=document.createElement('td');rvu.textContent=formatRVU(row.units);tr.append(date,cases,rvu);body.append(tr);});
+  if(!rows.length){body.innerHTML=`<tr class="table-empty"><td colspan="${detailed?9:4}">No saved days in this period yet.</td></tr>`;return;}
+  rows.forEach(row=>{
+    const tr=document.createElement('tr'),date=document.createElement('td'),button=document.createElement('button');button.className='text-button';button.textContent=dateLabel(row.date,{month:'short',day:'numeric',year:'numeric'});
+    button.addEventListener('click',()=>{if(pickDate(row.date)){setTab('journal');window.scrollTo({top:0,behavior:'smooth'});}});date.append(button);tr.append(date);
+    const values=detailed?[row.scheduledPatients,row.scheduledDoubles,row.scheduledProcedures,row.completedProcedures,row.colon,row.doubles,row.egd,formatRVU(row.units)]:[row.scheduledProcedures,row.completedProcedures,formatRVU(row.units)];
+    for(const value of values){const td=document.createElement('td');td.textContent=value??'—';tr.append(td);}body.append(tr);
+  });
 }
-function renderDaily(){ $('daily-month').textContent=monthLabel();renderRows('daily-totals',summarize(data.entries,month).rows); }
+function renderDaily(){ $('daily-month').textContent=monthLabel();renderRows('daily-totals',analyzeActivity(data.entries,data.schedules,{month}).rows); }
 function renderAverages(){
-  const selectedMonth=$('average-period').value==='month'?month:'';const summary=summarize(data.entries,selectedMonth);
-  $('average-period-label').textContent=selectedMonth?monthLabel():'All saved entries';$('average-value').textContent=summary.days?formatRVU(summary.averageUnits):'—';$('average-total').textContent=formatRVU(summary.units);$('average-days').textContent=summary.days;$('average-cases').textContent=`${summary.cases} case${summary.cases===1?'':'s'}`;
-  $('average-equation').textContent=summary.days?`${formatRVU(summary.units)} ÷ ${summary.days} logged day${summary.days===1?'':'s'}`:'Empty days excluded';renderRows('average-table',summary.rows);
+  const selectedMonth=$('average-period').value==='month'?month:'',through=localDate();
+  const summary=summarize(data.entries.filter(e=>e.date<=through),selectedMonth),activity=analyzeActivity(data.entries,data.schedules,{month:selectedMonth,through});
+  $('average-period-label').textContent=`${selectedMonth?monthLabel():'All time'} · through ${dateLabel(through,{month:'short',day:'numeric',year:'numeric'})}`;
+  $('average-value').textContent=summary.days?formatRVU(summary.averageUnits):'—';$('average-total').textContent=formatRVU(summary.units);$('average-days').textContent=summary.days;$('average-cases').textContent=`${summary.cases} completed patient encounters`;
+  $('average-equation').textContent=`${activity.days} tracked day${activity.days===1?'':'s'} · ${activity.scheduleDays} with schedules`;renderRows('average-table',activity.rows,true);
+  for(const [id,key,scheduled] of [['scheduled','scheduledProcedures',true],['completed','completedProcedures',false],['colon','colon',false],['doubles','doubles',false],['egd','egd',false],['scheduled-doubles','scheduledDoubles',true]]){
+    const count=scheduled?activity.scheduleDays:activity.days,value=activity.averages[key];
+    $('average-'+id).textContent=value===null?'—':value.toFixed(2);
+    $('average-'+id+'-detail').textContent=count?`${activity.totals[key]} ÷ ${count} ${scheduled?'schedule':'tracked'} day${count===1?'':'s'}`:'No data yet';
+  }
   const trend=$('trend');trend.replaceChildren();const days=summary.rows.slice(0,14).reverse(),max=Math.max(1,...days.map(d=>d.units));
   if(!days.length){trend.innerHTML='<div class="empty-state">Your daily totals will appear here.</div>';return;}
   days.forEach(day=>{const column=document.createElement('div');column.className='bar-column';column.setAttribute('aria-label',`${day.date}: ${formatRVU(day.units)} wRVUs`);const track=document.createElement('div');track.className='bar-track';const bar=document.createElement('div');bar.className='bar';bar.style.height=`${day.units/max*100}%`;const value=document.createElement('small');value.textContent=formatRVU(day.units);bar.append(value);track.append(bar);const date=document.createElement('span');date.textContent=dateLabel(day.date,{month:'numeric',day:'numeric'});column.append(track,date);trend.append(column);});
 }
 $('average-period').addEventListener('change',renderAverages);
-function render(){renderCalendar();renderEntries();renderDaily();renderAverages();}
+function render(){renderCalendar();renderEntries();renderSchedule();renderDaily();renderAverages();}
 function download(content,type,name){const blob=new Blob([content],{type}),url=URL.createObjectURL(blob),link=document.createElement('a');link.href=url;link.download=name;document.body.append(link);link.click();link.remove();setTimeout(()=>URL.revokeObjectURL(url),30000);}
 $('export-json').addEventListener('click',()=>{
   if(blockedStorage&&rawStorage){download(rawStorage,'application/json',`rvu-daily-recovery-${localDate()}.json`);return;}
-  download(JSON.stringify({...data,exportedAt:new Date().toISOString()},null,2),'application/json',`rvu-daily-backup-${localDate()}.json`);$('backup-status').textContent=`Exported ${data.entries.length} saved entries. Keep this file to restore or transfer phones.`;
+  download(JSON.stringify({...data,exportedAt:new Date().toISOString()},null,2),'application/json',`rvu-daily-backup-${localDate()}.json`);$('backup-status').textContent=`Exported ${data.entries.length} saved entries and ${data.schedules.length} daily schedules. Keep this file to restore or transfer phones.`;
 });
 $('export-original').addEventListener('click',()=>{const original=localStorage.getItem(RECOVERY_KEY);if(original)download(original,'application/json',`rvu-daily-before-wrvu-update.json`);});
-$('export-csv').addEventListener('click',()=>{const rows=summarize(data.entries).rows;download('Date,Cases,Colonoscopy cases,EGD cases,Combined cases,Work RVUs\r\n'+rows.map(r=>[r.date,r.cases,r.colon,r.egd,r.combo,formatRVU(r.units)].join(',')).join('\r\n'),'text/csv',`rvu-daily-totals-${localDate()}.csv`);$('backup-status').textContent='Daily totals exported. Use the JSON backup for importing.';});
+$('export-csv').addEventListener('click',()=>{const rows=analyzeActivity(data.entries,data.schedules).rows;download('Date,Scheduled patients,Scheduled doubles,Scheduled procedures,Completed patients,Completed procedures,Completed colonoscopies,Completed doubles,Completed EGDs,Work RVUs\r\n'+rows.map(r=>[r.date,r.scheduledPatients,r.scheduledDoubles,r.scheduledProcedures,r.cases,r.completedProcedures,r.colon,r.doubles,r.egd,formatRVU(r.units)].join(',')).join('\r\n'),'text/csv',`rvu-daily-totals-${localDate()}.csv`);$('backup-status').textContent='Daily totals and schedules exported. Use the JSON backup for importing.';});
 $('import-json').addEventListener('click',()=>$('import-file').click());
 $('import-file').addEventListener('change',async event=>{
   const file=event.target.files?.[0];event.target.value='';if(!file)return;
-  try { if(file.size>10*1024*1024)throw new Error('Backup is too large (maximum 10 MB).');pendingImport=parseBackup(await file.text());const result=mergeData(data,pendingImport);const days=summarize(result.entries).days;
-    $('import-summary').textContent=`This backup contains ${pendingImport.entries.length} saved entries. After merging: ${result.entries.length} entries across ${days} logged days.`;$('import-dialog').showModal();
+  try { if(file.size>10*1024*1024)throw new Error('Backup is too large (maximum 10 MB).');pendingImport=parseBackup(await file.text());const result=mergeData(data,pendingImport);const days=analyzeActivity(result.entries,result.schedules).days;
+    $('import-summary').textContent=`This backup contains ${pendingImport.entries.length} saved entries and ${pendingImport.schedules.length} daily schedules. After merging: ${result.entries.length} entries and ${result.schedules.length} schedules across ${days} tracked days.`;$('import-dialog').showModal();
   } catch(error){pendingImport=null;$('backup-status').textContent=error.message;}
 });
 $('cancel-import').addEventListener('click',()=>{pendingImport=null;$('import-dialog').close();});
-$('confirm-import').addEventListener('click',()=>{if(!pendingImport)return;const next=mergeData(data,pendingImport);if(saveData(next)){$('backup-status').textContent=`Import complete: ${data.entries.length} entries, ${summarize(data.entries).days} logged days.`;pendingImport=null;$('import-dialog').close();toast('Backup merged.');}});
+$('confirm-import').addEventListener('click',()=>{if(!pendingImport)return;const next=mergeData(data,pendingImport);if(saveData(next)){$('backup-status').textContent=`Import complete: ${data.entries.length} entries and ${data.schedules.length} daily schedules.`;pendingImport=null;$('import-dialog').close();toast('Backup merged.');}});
 $('settings-open').addEventListener('click',()=>$('settings-dialog').showModal());$('settings-close').addEventListener('click',()=>$('settings-dialog').close());
 const rateContainer=$('rates-table'),rateTable=document.createElement('table');rateTable.innerHTML='<thead><tr><th>Procedure</th><th>CPT</th><th>wRVUs</th></tr></thead>';const rateBody=document.createElement('tbody');
 for(const side of ['colon','egd'])for(const key of ['diagnostic',...TECHNIQUES]){const row=document.createElement('tr');for(const text of [`${LABELS[side]} · ${LABELS[key]}`,RATES[side][key].code,formatRVU(RATES[side][key].units)]){const cell=document.createElement('td');cell.textContent=text;row.append(cell);}rateBody.append(row);}rateTable.append(rateBody);rateContainer.append(rateTable);
 function considerUpdate(){
-  if(reloadNeeded){if(dirty||editId||pendingImport){$('update-notice').hidden=false;return;}if(!reloading){reloading=true;location.reload();}return;}
+  if(reloadNeeded){if(dirty||scheduleDirty||editId||pendingImport){$('update-notice').hidden=false;return;}if(!reloading){reloading=true;location.reload();}return;}
   if(!waitingWorker)return;
-  if(dirty||editId||pendingImport){$('update-notice').hidden=false;return;}
+  if(dirty||scheduleDirty||editId||pendingImport){$('update-notice').hidden=false;return;}
   waitingWorker.postMessage({type:'SKIP_WAITING'});
 }
-$('apply-update').addEventListener('click',()=>{if((dirty||editId||pendingImport)&&!confirm('Apply the update? Saved entries are safe, but your unsaved form or pending import will be cleared.'))return;if(reloadNeeded){location.reload();return;}waitingWorker?.postMessage({type:'SKIP_WAITING'});});
+$('apply-update').addEventListener('click',()=>{if((dirty||scheduleDirty||editId||pendingImport)&&!confirm('Apply the update? Saved entries are safe, but your unsaved form or pending import will be cleared.'))return;if(reloadNeeded){location.reload();return;}waitingWorker?.postMessage({type:'SKIP_WAITING'});});
 if('serviceWorker'in navigator){
   navigator.serviceWorker.addEventListener('controllerchange',()=>{if(!hadController){hadController=true;return;}reloadNeeded=true;considerUpdate();});
   navigator.serviceWorker.register('./sw.js',{scope:'./',updateViaCache:'none'}).then(reg=>{
@@ -204,7 +267,7 @@ if('serviceWorker'in navigator){
   }).catch(()=>{$('update-status').textContent='Offline installation is unavailable in this browser. Saved entries still work.';});
   document.addEventListener('visibilitychange',()=>{if(!document.hidden){swRegistration?.update().catch(()=>{});considerUpdate();}});
 }
-$('check-update').addEventListener('click',async()=>{if(!swRegistration){$('update-status').textContent='Updates require an HTTPS browser that supports service workers.';return;}$('update-status').textContent='Checking…';try{await swRegistration.update();if(swRegistration.waiting){waitingWorker=swRegistration.waiting;considerUpdate();$('update-status').textContent='Update ready.';}else $('update-status').textContent=swRegistration.installing?'Downloading the new version…':'Up to date · v1.1.0';}catch{$('update-status').textContent='Could not check while offline. The app will retry when opened online.';}});
+$('check-update').addEventListener('click',async()=>{if(!swRegistration){$('update-status').textContent='Updates require an HTTPS browser that supports service workers.';return;}$('update-status').textContent='Checking…';try{await swRegistration.update();if(swRegistration.waiting){waitingWorker=swRegistration.waiting;considerUpdate();$('update-status').textContent='Update ready.';}else $('update-status').textContent=swRegistration.installing?'Downloading the new version…':'Up to date · v1.2.0';}catch{$('update-status').textContent='Could not check while offline. The app will retry when opened online.';}});
 window.addEventListener('beforeinstallprompt',event=>{event.preventDefault();installPrompt=event;$('install-app').hidden=false;});
 $('install-app').addEventListener('click',async()=>{await installPrompt?.prompt();installPrompt=null;$('install-app').hidden=true;});
 window.addEventListener('appinstalled',()=>{$('install-app').hidden=true;});

@@ -6,7 +6,17 @@ A small, local-first, installable PWA for GI work RVU tracking. Source lives in 
 
 Choose a calendar day, select **Colonoscopy**, **EGD**, or **Colon / EGD**, then tap **Forceps bx**, **Snare**, or **EMR** separately for lower and upper procedures. No intervention selected means diagnostic. Save a case, or set the number of identical cases first. Entries can be edited, deleted, and restored with Undo.
 
-The Journal shows daily totals. The Averages tab divides total RVUs by **unique dates containing saved entries only**. Blank dates, weekends without entries, and holidays without entries are excluded. Deleting the final entry for a date removes that date from the denominator.
+The Journal shows daily totals. The Analysis tab divides total RVUs by **unique dates containing saved entries only**. Blank dates, weekends without entries, and holidays without entries are excluded. Deleting the final entry for a date removes that date from the denominator.
+
+## Daily schedules and procedure analysis (v1.2.0)
+
+For each date, save **Patients scheduled** and **Doubles scheduled**. A double is one patient having an EGD and colonoscopy. Scheduled procedures = patients + doubles: **4 patients + 2 doubles = 6 procedures**. Doubles cannot exceed patients; counts must be whole numbers. An explicitly saved zero is distinct from a missing schedule. Schedules can be edited or cleared independently of completed cases, with Undo for clearing.
+
+The Analysis tab has selected-month and all-time running averages for scheduled procedures, completed procedures, colonoscopies, completed doubles, EGDs, and scheduled doubles. Completed counts come from saved cases and respect their quantities. A combined case counts as two procedures, one colonoscopy, one EGD and one double. Multiple techniques within a scope do not create extra procedures.
+
+Running averages include dates **through today** in the device's local timezone. Completed procedure averages use dates with a saved case or schedule, including scheduled dates with zero completed cases. Scheduled averages use only dates with a saved schedule; missing historical schedules are not treated as zero. Future schedules appear in the Journal but do not lower running completion averages. Each metric shows its numerator and denominator. The existing work-RVU average continues to divide by dates containing completed cases only.
+
+Schema 3 adds per-date `schedules` and `scheduleTombstones`. Schema 1 and 2 backups remain importable, completed entries are preserved, and importing an older backup does not erase existing schedules. Newer edits and schedule deletions win by timestamp. JSON backup/restore includes schedules; daily CSV includes scheduled and completed procedure counts. The storage key and work-RVU rules stay unchanged.
 
 ## Work-RVU calculation model (v1.1.0)
 
@@ -45,9 +55,9 @@ References reviewed November 1, 2026:
 
 ### Existing data and migration
 
-Rule version is `2026-work-rvu-v2`; backup schema is 2, with the storage key unchanged. Version-1 backups remain importable. Parsing preserves IDs, dates, quantities, timestamps and tombstones, and recalculates full work totals. The user's separate-lesion assumption applies to multiple techniques in **existing and new entries**; there is no review queue or extra entry step.
+Rule version is `2026-work-rvu-v2`; backup schema is 3, with the storage key unchanged. Version-1 and version-2 backups remain importable. Parsing preserves IDs, dates, quantities, timestamps and tombstones, and recalculates full work totals. The user's separate-lesion assumption applies to multiple techniques in **existing and new entries**; there is no review queue or extra entry step.
 
-Before first converting on-device version-1 data, the app stores the exact original JSON under `rvu-daily-before-work-rvu-v2`, available via **Export pre-update backup**. If this backup or migration cannot be written, saving is blocked to protect existing data. Importing an older backup does not overwrite newer edits. Old app versions reject schema 2 rather than modifying it with the former rule.
+Before first converting on-device version-1 data, the app stores the exact original JSON under `rvu-daily-before-work-rvu-v2`, available via **Export pre-update backup**. If this backup or migration cannot be written, saving is blocked to protect existing data. Importing an older backup does not overwrite newer edits. Old app versions reject schema 3 rather than modifying it with the former rule.
 
 ## Storage and backup
 
