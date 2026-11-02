@@ -8,6 +8,10 @@ Choose a calendar day, select **Colonoscopy**, **EGD**, or **Colon / EGD**, then
 
 The Journal shows daily totals. The Analysis tab divides total RVUs by **unique dates containing saved entries only**. Blank dates, weekends without entries, and holidays without entries are excluded. Deleting the final entry for a date removes that date from the denominator.
 
+## Daily compensation estimates (v1.2.1)
+
+Analysis shows a three-row table at **$60, $65 and $70 per work RVU**. Each daily estimate is the selected period's unrounded average daily work RVUs multiplied by the rate, displayed as USD to the nearest cent. It follows the same selected-month/all-time filters and completed-case-day denominator as the existing work-RVU average, through today. Empty periods show a dash. These are gross estimates before tax or employer adjustments. Saved entries, schedules and work-RVU counting are unchanged.
+
 ## Daily schedules and procedure analysis (v1.2.0)
 
 For each date, save **Patients scheduled** and **Doubles scheduled**. A double is one patient having an EGD and colonoscopy. Scheduled procedures = patients + doubles: **4 patients + 2 doubles = 6 procedures**. Doubles cannot exceed patients; counts must be whole numbers. An explicitly saved zero is distinct from a missing schedule. Schedules can be edited or cleared independently of completed cases, with Undo for clearing.
