@@ -10,3 +10,5 @@
 
 .compensation-panel{margin:20px 0 28px}.compensation-panel th:last-child,.compensation-panel td:last-child{text-align:right}.compensation-note{margin-top:14px;font-size:10px;line-height:1.6}
 .fixed-rate-table{margin-top:24px}
+
+.activity-panel{margin:28px 0}.activity-table{table-layout:fixed;width:100%}.activity-table th:first-child{width:34%}.activity-table th:not(:first-child),.activity-table td{text-align:right}.activity-table tbody th{text-transform:none;letter-spacing:normal;font-size:12px;white-space:normal}.activity-table td{white-space:normal;vertical-align:middle}.activity-table strong{display:block;font-size:24px;font-weight:550;color:var(--green)}.activity-table small{display:block;font-size:10px;line-height:1.5;color:var(--muted);margin-top:5px}.activity-panel .analysis-note{margin:16px 0 0}@media(max-width:480px){.activity-table th{font-size:9px}.activity-table tbody th{font-size:11px}.activity-table strong{font-size:21px}.activity-table small{font-size:9px}}

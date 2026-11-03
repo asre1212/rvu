@@ -69,21 +69,25 @@
           </tbody></table>
           <p class="muted compensation-note">$3,500 ÷ average daily wRVUs for this period. Uses the unrounded average; no estimate when average wRVUs are zero or unavailable.</p>
         </section>
-        <h2 class="activity-heading">Procedures per day</h2>
-        <div class="stats activity-stats">
-          <div class="stat"><span>Scheduled procedures / day</span><strong id="average-scheduled">—</strong><small id="average-scheduled-detail">No data yet</small></div>
-          <div class="stat"><span>Completed procedures / day</span><strong id="average-completed">—</strong><small id="average-completed-detail">No data yet</small></div>
-          <div class="stat"><span>Colonoscopies / day</span><strong id="average-colon">—</strong><small id="average-colon-detail">No data yet</small></div>
-          <div class="stat"><span>Scheduled doubles / day</span><strong id="average-scheduled-doubles">—</strong><small id="average-scheduled-doubles-detail">No data yet</small></div>
-          <div class="stat"><span>Completed doubles / day</span><strong id="average-doubles">—</strong><small id="average-doubles-detail">No data yet</small></div>
-          <div class="stat"><span>EGDs / day</span><strong id="average-egd">—</strong><small id="average-egd-detail">No data yet</small></div>
-        </div>
-        <p class="muted analysis-note">A double includes one colonoscopy and one EGD. Completed averages use days with a saved case or schedule through today, including scheduled days with zero completed cases. Scheduled averages use only days with a saved schedule. Future dates and blank calendar days are excluded.</p>
+        <section class="panel activity-panel" aria-labelledby="activity-heading">
+          <div class="panel-top"><h2 id="activity-heading">Procedures per day</h2></div>
+          <p class="muted table-note">Daily averages for the selected period, with total counts below.</p>
+          <table class="activity-table" aria-label="Scheduled and completed daily procedure averages">
+            <thead><tr><th scope="col">Procedure</th><th scope="col">Scheduled</th><th scope="col">Completed</th></tr></thead>
+            <tbody>
+              <tr><th scope="row">Total procedures</th><td><strong id="average-scheduled">—</strong><small id="average-scheduled-detail">No data yet</small></td><td><strong id="average-completed">—</strong><small id="average-completed-detail">No data yet</small></td></tr>
+              <tr><th scope="row">Doubles</th><td><strong id="average-scheduled-doubles">—</strong><small id="average-scheduled-doubles-detail">No data yet</small></td><td><strong id="average-doubles">—</strong><small id="average-doubles-detail">No data yet</small></td></tr>
+              <tr><th scope="row">Colonoscopies</th><td class="muted">Not tracked</td><td><strong id="average-colon">—</strong><small id="average-colon-detail">No data yet</small></td></tr>
+              <tr><th scope="row">EGDs</th><td class="muted">Not tracked</td><td><strong id="average-egd">—</strong><small id="average-egd-detail">No data yet</small></td></tr>
+            </tbody>
+          </table>
+          <p class="muted analysis-note">A double includes one colonoscopy and one EGD and counts as two total procedures. Scheduled colonoscopy and EGD counts are not collected separately. Completed averages use days with a saved case or schedule through today, including scheduled days with zero completed cases. Scheduled averages use only days with a saved schedule. Future dates and blank calendar days are excluded.</p>
+        </section>
         <section class="panel trend-panel"><div class="panel-top"><h2>Daily rhythm</h2><span class="muted">Most recent 14 logged days</span></div><div id="trend" class="trend"></div></section>
         <section class="panel"><div class="panel-top"><h2>Included days</h2><span id="average-equation" class="muted"></span></div><div class="table-scroll"><table><thead><tr><th>Date</th><th>Patients scheduled</th><th>Doubles scheduled</th><th>Procedures scheduled</th><th>Procedures completed</th><th>Colonoscopies</th><th>Doubles completed</th><th>EGDs</th><th>wRVUs</th></tr></thead><tbody id="average-table"></tbody></table></div></section>
       </section>
     </main>
-    <footer>Saved on your device <span>·</span> 2026 work RVUs · Full code values <span>·</span> <span id="app-version">v1.2.2</span></footer>
+    <footer>Saved on your device <span>·</span> 2026 work RVUs · Full code values <span>·</span> <span id="app-version">v1.2.3</span></footer>
   </div>
   <dialog id="settings-dialog"><div class="dialog-header"><h2>Rules & backup</h2><button id="settings-close" class="icon-button" aria-label="Close settings">×</button></div><div class="dialog-content">
     <section><h3>Work RVU rules</h3><p>2026 work RVUs for completed EGD and colonoscopy, before any employer-specific adjustments.</p><ul><li>Count each separately reportable code at <strong>100% of its work RVUs</strong>. EGD + colonoscopy are added in full. No 50% payment cuts or diagnostic-base subtraction.</li><li>For a single lesion, select only the final technique: snare includes its biopsy, and EMR includes its biopsy/snare. Do not select component techniques for that same lesion.</li><li>Selecting multiple techniques means they were performed on <strong>separate lesions/sites</strong> and are independently reportable. They count automatically, with no extra confirmation. Modifier 59/XS may be required for distinct services; it does not change the published work-RVU value.</li><li>One code per technique per scope, even for multiple biopsies or polyps. Diagnostic work is already included in a therapeutic code. “Cases” means identical patient encounters, not lesions.</li><li>Select upper and lower techniques independently. Biopsies in both scopes count once in each scope.</li><li>Averages = total work RVUs ÷ dates with saved entries. Empty dates are excluded.</li></ul><p class="note">Cold forceps only; hot forceps use different codes. These are full work-RVU values, not a claim or payment estimate. Incomplete procedures, screening HCPCS codes, sedation and other interventions are outside this quick-entry model.</p><p class="note">Older entries are recalculated with full work RVUs. Multiple techniques in existing entries are also treated as separate lesions/sites, as requested. Your entries, dates and case counts are preserved; a pre-update backup is kept on this device.</p><details><summary>2026 rates & sources</summary><div id="rates-table"></div><p><a href="https://www.cms.gov/medicare/payment/fee-schedules/physician/pfs-relative-value-files/rvu26d" target="_blank" rel="noreferrer">CMS October 2026 work RVU file</a><br><a href="https://www.cms.gov/files/document/06-chapter6-ncci-medicare-policy-manual-2026-final.pdf" target="_blank" rel="noreferrer">CMS 2026 NCCI digestive-system rules</a><br><a href="https://www.cms.gov/medicare-coverage-database/view/article.aspx?articleId=53399" target="_blank" rel="noreferrer">CMS separate-lesion guidance</a><br><a href="https://www.asge.org/docs/default-source/education/Technology_Reviews/doc-endoscopic_mucosal_resection_aip.pdf" target="_blank" rel="noreferrer">ASGE EMR component bundling</a></p></details></section>

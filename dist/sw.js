@@ -1,4 +1,4 @@
-const VERSION = '9bf7a3ba018e24f8';
+const VERSION = '715f4cec5f530f2b';
 const PREFIX = 'rvu-daily-shell-';
 const CACHE = PREFIX + VERSION;
 const FILES = ['./','./index.html','./styles.css','./app.js','./engine.js','./manifest.webmanifest','./icon.svg','./icon-192.png','./icon-512.png'];
