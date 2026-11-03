@@ -225,7 +225,7 @@ function renderAverages(){
   for(const rate of [60,65,70])$('compensation-'+rate).textContent=summary.days?dollars.format(summary.averageUnits/10000*rate):'—';
   $('compensation-per-wrvu').textContent=summary.averageUnits>0?dollars.format(3500/(summary.averageUnits/10000)):'—';
   $('average-equation').textContent=`${activity.days} tracked day${activity.days===1?'':'s'} · ${activity.scheduleDays} with schedules`;renderRows('average-table',activity.rows,true);
-  for(const [id,key,scheduled] of [['scheduled','scheduledProcedures',true],['completed','completedProcedures',false],['colon','colon',false],['doubles','doubles',false],['egd','egd',false],['scheduled-doubles','scheduledDoubles',true]]){
+  for(const [id,key,scheduled] of [['scheduled-patients','scheduledPatients',true],['completed-patients','cases',false],['scheduled','scheduledProcedures',true],['completed','completedProcedures',false],['colon','colon',false],['doubles','doubles',false],['egd','egd',false],['scheduled-doubles','scheduledDoubles',true]]){
     const count=scheduled?activity.scheduleDays:activity.days,value=activity.averages[key];
     $('average-'+id).textContent=value===null?'—':value.toFixed(2);
     $('average-'+id+'-detail').textContent=count?`${activity.totals[key]} ÷ ${count} ${scheduled?'schedule':'tracked'} day${count===1?'':'s'}`:'No data yet';
@@ -271,7 +271,7 @@ if('serviceWorker'in navigator){
   }).catch(()=>{$('update-status').textContent='Offline installation is unavailable in this browser. Saved entries still work.';});
   document.addEventListener('visibilitychange',()=>{if(!document.hidden){swRegistration?.update().catch(()=>{});considerUpdate();}});
 }
-$('check-update').addEventListener('click',async()=>{if(!swRegistration){$('update-status').textContent='Updates require an HTTPS browser that supports service workers.';return;}$('update-status').textContent='Checking…';try{await swRegistration.update();if(swRegistration.waiting){waitingWorker=swRegistration.waiting;considerUpdate();$('update-status').textContent='Update ready.';}else $('update-status').textContent=swRegistration.installing?'Downloading the new version…':'Up to date · v1.2.3';}catch{$('update-status').textContent='Could not check while offline. The app will retry when opened online.';}});
+$('check-update').addEventListener('click',async()=>{if(!swRegistration){$('update-status').textContent='Updates require an HTTPS browser that supports service workers.';return;}$('update-status').textContent='Checking…';try{await swRegistration.update();if(swRegistration.waiting){waitingWorker=swRegistration.waiting;considerUpdate();$('update-status').textContent='Update ready.';}else $('update-status').textContent=swRegistration.installing?'Downloading the new version…':'Up to date · v1.2.4';}catch{$('update-status').textContent='Could not check while offline. The app will retry when opened online.';}});
 window.addEventListener('beforeinstallprompt',event=>{event.preventDefault();installPrompt=event;$('install-app').hidden=false;});
 $('install-app').addEventListener('click',async()=>{await installPrompt?.prompt();installPrompt=null;$('install-app').hidden=true;});
 window.addEventListener('appinstalled',()=>{$('install-app').hidden=true;});

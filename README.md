@@ -8,9 +8,9 @@ Choose a calendar day, select **Colonoscopy**, **EGD**, or **Colon / EGD**, then
 
 The Journal shows daily totals. The Analysis tab divides total RVUs by **unique dates containing saved entries only**. Blank dates, weekends without entries, and holidays without entries are excluded. Deleting the final entry for a date removes that date from the denominator.
 
-## Side-by-side procedure averages (v1.2.3)
+## Side-by-side patient and procedure averages (v1.2.4)
 
-Analysis compares scheduled and completed daily averages in one table: total procedures, doubles, colonoscopies and EGDs. Each available average retains its total-count/day denominator. Scheduled colonoscopy and EGD splits are labeled **Not tracked**, since the schedule records only patient and double counts. Calculations and saved data are unchanged.
+Analysis compares scheduled and completed daily averages in one table: patients, total procedures, doubles, colonoscopies and EGDs. A completed double counts as one patient. Scheduled patient averages use saved schedule days; completed patient averages use tracked days with a case or schedule, including zero-completion schedule days. Each available average retains its total-count/day denominator. Scheduled colonoscopy and EGD splits are labeled **Not tracked**, since the schedule records only patient and double counts. Calculations and saved data are unchanged.
 
 ## Daily compensation estimates (v1.2.2)
 
