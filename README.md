@@ -2,6 +2,12 @@
 
 A small, local-first, installable PWA for GI work RVU tracking. Source lives in **asre1212/rvu**.
 
+## Payment tracker (v1.3.0)
+
+The Payment tracker tab lists one row per date with a saved case or schedule, plus manually added past or future dates. Checking Paid saves the actual check time. Paid rows automatically leave the active list after 30 elapsed days; retained archive records prevent them reappearing from logged dates. Show archived lets you review and uncheck them. Unpaid dates never expire. Manual-only dates can be removed with Undo; duplicate dates are prevented and manual dates never affect productivity averages.
+
+Schema 4 includes date-keyed payment records with manual status, paid timestamp, and last-edit timestamp. JSON backup/import preserves active and archived records; newer payment edits win, including unchecking or removing manual dates. Schemas 1–3 remain importable and do not erase current payment history. Existing entries, schedules, and work-RVU calculations are unchanged.
+
 ## Use
 
 Choose a calendar day, select **Colonoscopy**, **EGD**, or **Colon / EGD**, then tap **Forceps bx**, **Snare**, or **EMR** separately for lower and upper procedures. No intervention selected means diagnostic. Save a case, or set the number of identical cases first. Entries can be edited, deleted, and restored with Undo.
@@ -65,7 +71,7 @@ References reviewed November 1, 2026:
 
 ### Existing data and migration
 
-Rule version is `2026-work-rvu-v2`; backup schema is 3, with the storage key unchanged. Version-1 and version-2 backups remain importable. Parsing preserves IDs, dates, quantities, timestamps and tombstones, and recalculates full work totals. The user's separate-lesion assumption applies to multiple techniques in **existing and new entries**; there is no review queue or extra entry step.
+Rule version is `2026-work-rvu-v2`; backup schema is 4, with the storage key unchanged. Version-1, version-2 and version-3 backups remain importable. Parsing preserves IDs, dates, quantities, timestamps and tombstones, and recalculates full work totals. The user's separate-lesion assumption applies to multiple techniques in **existing and new entries**; there is no review queue or extra entry step.
 
 Before first converting on-device version-1 data, the app stores the exact original JSON under `rvu-daily-before-work-rvu-v2`, available via **Export pre-update backup**. If this backup or migration cannot be written, saving is blocked to protect existing data. Importing an older backup does not overwrite newer edits. Old app versions reject schema 3 rather than modifying it with the former rule.
 

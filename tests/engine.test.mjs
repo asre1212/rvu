@@ -1,8 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {calculate,sideCalculation,summarize,parseBackup,mergeData,RULE_VERSION,LEGACY_RULE_VERSION,SCHEMA_VERSION,validDate,formatRVU,scheduledProcedures,validateSchedule,analyzeActivity} from '../dist/engine.js';
+import {calculate,sideCalculation,summarize,parseBackup,mergeData,RULE_VERSION,LEGACY_RULE_VERSION,SCHEMA_VERSION,validDate,formatRVU,scheduledProcedures,validateSchedule,analyzeActivity,paymentRows,validatePayment} from '../dist/engine.js';
 const entry=(changes={})=>({id:'test-1',date:'2026-11-01',type:'colon',lower:[],upper:[],quantity:1,ruleVersion:RULE_VERSION,updatedAt:'2026-11-01T18:00:00Z',...changes});
-const backup=entries=>({app:'rvu-daily',schemaVersion:SCHEMA_VERSION,entries,tombstones:{},schedules:[],scheduleTombstones:{}});
+const backup=entries=>({app:'rvu-daily',schemaVersion:SCHEMA_VERSION,entries,tombstones:{},schedules:[],scheduleTombstones:{},payments:[]});
 test('eight 2026 work values; therapeutic code includes diagnostic work',()=>{
   const lower=[31800,34700,44600,58900],upper=[20400,23300,33800,47500];
   for(const [i,tech] of [null,'forceps','snare','emr'].entries()){
@@ -143,4 +143,39 @@ test('invalid schedules and deletion dates reject the entire backup',()=>{
   assert.throws(()=>parseBackup(JSON.stringify({...backup([]),schedules:[schedule(),schedule()]})));
   assert.throws(()=>parseBackup(JSON.stringify({...backup([]),scheduleTombstones:{bad:'2026-11-01T18:00:00Z'}})));
   assert.throws(()=>parseBackup(JSON.stringify({...backup([]),schedules:null})));
+});
+
+test('payment dates deduplicate logs, schedules and manual dates without changing activity',()=>{
+  const d=backup([entry(),entry({id:'two',type:'combo',quantity:2})]);
+  d.schedules=[{date:'2026-11-01',patients:4,doubles:2,updatedAt:'2026-11-01T18:00:00Z'},{date:'2026-11-02',patients:0,doubles:0,updatedAt:'2026-11-01T18:00:00Z'}];
+  d.payments=[{date:'2025-01-01',manual:true,paidAt:null,updatedAt:'2026-11-01T18:00:00Z'},{date:'2027-01-01',manual:true,paidAt:null,updatedAt:'2026-11-01T18:00:00Z'}];
+  assert.deepEqual(paymentRows(d).map(p=>p.date),['2025-01-01','2026-11-01','2026-11-02','2027-01-01']);
+  assert.equal(analyzeActivity(d.entries,d.schedules).days,2);
+});
+test('paid rows archive exactly 30 elapsed days after checking, unpaid rows never expire',()=>{
+  const d=backup([entry()]),paidAt='2026-11-03T12:00:00Z',start=Date.parse(paidAt);
+  d.payments=[{date:'2026-11-01',manual:false,paidAt,updatedAt:paidAt}];
+  assert.equal(paymentRows(d,start+30*86400000-1)[0].archived,false);
+  assert.equal(paymentRows(d,start+30*86400000)[0].archived,true);
+  assert.equal(paymentRows(parseBackup(JSON.stringify(d)),start+90*86400000)[0].archived,true);
+  d.payments[0].paidAt=null;assert.equal(paymentRows(d,start+365*86400000)[0].archived,false);
+});
+test('payment backup merge preserves newer unchecks and manual removal and accepts old schemas',()=>{
+  const d=backup([entry()]);d.payments=[{date:'2026-10-01',manual:true,paidAt:'2026-11-01T12:00:00Z',updatedAt:'2026-11-01T12:00:00Z'}];
+  assert.deepEqual(parseBackup(JSON.stringify(d)),d);
+  const removed={...d,payments:[{...d.payments[0],manual:false,paidAt:null,updatedAt:'2026-11-03T12:00:00Z'}]};
+  assert.deepEqual(mergeData(removed,d).payments,removed.payments);
+  assert.equal(paymentRows(mergeData(d,removed)).length,1);
+  const restored={...d,payments:[{...d.payments[0],paidAt:null,updatedAt:'2026-11-04T12:00:00Z'}]};
+  assert.equal(paymentRows(mergeData(removed,restored)).length,2);
+  for(const schemaVersion of [1,2,3]){
+    const old=parseBackup(JSON.stringify({...d,schemaVersion}));
+    assert.deepEqual(old.payments,[]);assert.deepEqual(mergeData(d,old).payments,d.payments);
+  }
+});
+test('invalid payment records and duplicate payment dates fail import atomically',()=>{
+  const p={date:'2026-11-01',manual:true,paidAt:null,updatedAt:'2026-11-03T12:00:00Z'};
+  for(const bad of [{...p,date:'2026-02-30'},{...p,manual:1},{...p,paidAt:'bad'},{...p,updatedAt:null}])assert.throws(()=>validatePayment(bad));
+  assert.throws(()=>parseBackup(JSON.stringify({...backup([]),payments:[p,p]})));
+  assert.throws(()=>parseBackup(JSON.stringify({...backup([]),payments:null})));
 });

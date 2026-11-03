@@ -1,13 +1,14 @@
-import { RATES, RULE_VERSION, SCHEMA_VERSION, STORAGE_KEY, RECOVERY_KEY, TECHNIQUES, LABELS, validateEntry, validateSchedule, scheduledProcedures, analyzeActivity, calculate, formatRVU, parseBackup, mergeData, summarize, validDate } from './engine.js';
+import { RATES, RULE_VERSION, SCHEMA_VERSION, STORAGE_KEY, RECOVERY_KEY, TECHNIQUES, LABELS, validateEntry, validateSchedule, scheduledProcedures, analyzeActivity, calculate, formatRVU, parseBackup, mergeData, summarize, validDate, paymentRows, validatePayment } from './engine.js';
 const $ = id => document.getElementById(id);
 const dollars = new Intl.NumberFormat('en-US',{style:'currency',currency:'USD'});
 const localDate = (d = new Date()) => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
 const dateLabel = (date, options) => new Date(date+'T12:00:00').toLocaleDateString('en-US',options);
-const emptyData = () => ({ app:'rvu-daily',schemaVersion:SCHEMA_VERSION,entries:[],tombstones:{},schedules:[],scheduleTombstones:{} });
+const emptyData = () => ({ app:'rvu-daily',schemaVersion:SCHEMA_VERSION,entries:[],tombstones:{},schedules:[],scheduleTombstones:{},payments:[] });
 const blankDraft = type => ({type,lower:[],upper:[],quantity:1});
 const newId = () => crypto.randomUUID ? crypto.randomUUID() : Array.from(crypto.getRandomValues(new Uint8Array(16)),n=>n.toString(16).padStart(2,'0')).join('');
 let data = emptyData(), selectedDate = localDate(), month = selectedDate.slice(0,7), tab = 'journal';
 let draft = blankDraft('colon'), editId = null, dirty = false, pendingImport = null;
+let paymentDirty = false;
 let scheduleDirty = false, scheduleDate = null;
 let blockedStorage = false, rawStorage = null, waitingWorker = null, swRegistration = null, reloading = false, reloadNeeded = false, hadController = !!navigator.serviceWorker?.controller, installPrompt = null;
 let toastTimer, undoAction;
@@ -30,7 +31,7 @@ function toast(message, undo = null) {
 }
 $('toast-undo').addEventListener('click',()=>{ const action=undoAction; $('toast').hidden=true; undoAction=null; action?.(); });
 function timestamp() {
-  const stamps = [...data.entries.map(e=>e.updatedAt),...data.schedules.map(s=>s.updatedAt),...Object.values(data.tombstones),...Object.values(data.scheduleTombstones)];
+  const stamps = [...data.payments.map(p=>p.updatedAt),...data.entries.map(e=>e.updatedAt),...data.schedules.map(s=>s.updatedAt),...Object.values(data.tombstones),...Object.values(data.scheduleTombstones)];
   const latest = stamps.reduce((n,s)=>Math.max(n,Date.parse(s)),0);
   return new Date(Math.max(Date.now(),latest+1)).toISOString();
 }
@@ -49,12 +50,13 @@ window.addEventListener('storage',event=>{
 });
 function monthLabel() { return dateLabel(month+'-01',{month:'long',year:'numeric'}); }
 function setTab(next) {
-  tab=next; $('journal-view').hidden=next!=='journal'; $('averages-view').hidden=next!=='averages';
-  for(const kind of ['journal','averages']) { const button=$(kind+'-tab'); button.classList.toggle('active',kind===next); if(kind===next)button.setAttribute('aria-current','page');else button.removeAttribute('aria-current'); }
-  renderAverages();
+  tab=next; $('journal-view').hidden=next!=='journal'; $('averages-view').hidden=next!=='averages'; $('payments-view').hidden=next!=='payments';
+  for(const kind of ['journal','averages','payments']) { const button=$(kind+'-tab'); button.classList.toggle('active',kind===next); if(kind===next)button.setAttribute('aria-current','page');else button.removeAttribute('aria-current'); }
+  renderAverages();renderPayments();
 }
 $('journal-tab').addEventListener('click',()=>setTab('journal'));
 $('averages-tab').addEventListener('click',()=>setTab('averages'));
+$('payments-tab').addEventListener('click',()=>setTab('payments'));
 function pickDate(date) {
   if(!validDate(date))return false;
   if((editId||scheduleDirty) && date!==selectedDate && !confirm('Discard the unsaved edit or schedule and change day?')){ $('entry-date').value=selectedDate; return false; }
@@ -235,11 +237,42 @@ function renderAverages(){
   days.forEach(day=>{const column=document.createElement('div');column.className='bar-column';column.setAttribute('aria-label',`${day.date}: ${formatRVU(day.units)} wRVUs`);const track=document.createElement('div');track.className='bar-track';const bar=document.createElement('div');bar.className='bar';bar.style.height=`${day.units/max*100}%`;const value=document.createElement('small');value.textContent=formatRVU(day.units);bar.append(value);track.append(bar);const date=document.createElement('span');date.textContent=dateLabel(day.date,{month:'numeric',day:'numeric'});column.append(track,date);trend.append(column);});
 }
 $('average-period').addEventListener('change',renderAverages);
-function render(){renderCalendar();renderEntries();renderSchedule();renderDaily();renderAverages();}
+function render(){renderCalendar();renderEntries();renderSchedule();renderDaily();renderAverages();renderPayments();}
+function savePayment(date, changes) {
+  const prior=data.payments.find(p=>p.date===date) ?? {date,manual:false,paidAt:null};
+  const payment=validatePayment({...prior,...changes,updatedAt:timestamp()});
+  return saveData({...data,payments:[...data.payments.filter(p=>p.date!==date),payment]});
+}
+function renderPayments() {
+  const rows=paymentRows(data),archived=$('payments-archive').checked;
+  const visible=rows.filter(p=>p.archived===archived),body=$('payment-rows');body.replaceChildren();
+  $('payment-summary').textContent=`${rows.filter(p=>!p.paidAt).length} unpaid · ${rows.filter(p=>p.paidAt&&!p.archived).length} recently paid · ${rows.filter(p=>p.archived).length} archived`;
+  if(!visible.length){body.innerHTML=`<tr><td colspan="3" class="muted">${archived?'No archived payments.':'No dates to track. Log a case or schedule, or add a date above.'}</td></tr>`;return;}
+  for(const p of visible){
+    const tr=document.createElement('tr'),date=document.createElement('td'),paid=document.createElement('td'),details=document.createElement('td');
+    date.textContent=dateLabel(p.date,{month:'short',day:'numeric',year:'numeric'});
+    const box=document.createElement('input');box.type='checkbox';box.checked=!!p.paidAt;box.disabled=blockedStorage;box.setAttribute('aria-label',`Paid for ${p.date}`);
+    box.addEventListener('change',()=>{if(!savePayment(p.date,{paidAt:box.checked?new Date().toISOString():null}))box.checked=!!p.paidAt;});paid.append(box);
+    const label=document.createElement('span');label.textContent=p.paidAt?`Paid ${new Date(p.paidAt).toLocaleDateString('en-US')}`:p.logged?(p.manual?'Logged + manual':'Logged'):'Manual';details.append(label);
+    if(p.manual&&!p.logged){const remove=document.createElement('button');remove.type='button';remove.className='text-button';remove.textContent='Remove';remove.disabled=blockedStorage;remove.setAttribute('aria-label',`Remove manual date ${p.date}`);remove.addEventListener('click',()=>{
+      if(savePayment(p.date,{manual:false,paidAt:null}))toast('Manual date removed.',()=>{if(savePayment(p.date,{manual:true,paidAt:p.paidAt}))toast('Date restored.');});
+    });details.append(remove);}
+    tr.append(date,paid,details);body.append(tr);
+  }
+}
+$('payment-date').addEventListener('input',()=>{paymentDirty=!!$('payment-date').value;});
+$('payment-add-form').addEventListener('submit',event=>{
+  event.preventDefault();const date=$('payment-date').value;if(!validDate(date))return;
+  if(paymentRows(data).some(p=>p.date===date)){toast('That date is already tracked. Check archived payments if it is hidden.');return;}
+  if(savePayment(date,{manual:true,paidAt:null})){$('payment-date').value='';paymentDirty=false;toast('Date added to payment tracker.');considerUpdate();}
+});
+$('payments-archive').addEventListener('change',renderPayments);
+document.addEventListener('visibilitychange',()=>{if(!document.hidden)renderPayments();});
+setInterval(renderPayments,60000);
 function download(content,type,name){const blob=new Blob([content],{type}),url=URL.createObjectURL(blob),link=document.createElement('a');link.href=url;link.download=name;document.body.append(link);link.click();link.remove();setTimeout(()=>URL.revokeObjectURL(url),30000);}
 $('export-json').addEventListener('click',()=>{
   if(blockedStorage&&rawStorage){download(rawStorage,'application/json',`rvu-daily-recovery-${localDate()}.json`);return;}
-  download(JSON.stringify({...data,exportedAt:new Date().toISOString()},null,2),'application/json',`rvu-daily-backup-${localDate()}.json`);$('backup-status').textContent=`Exported ${data.entries.length} saved entries and ${data.schedules.length} daily schedules. Keep this file to restore or transfer phones.`;
+  download(JSON.stringify({...data,exportedAt:new Date().toISOString()},null,2),'application/json',`rvu-daily-backup-${localDate()}.json`);$('backup-status').textContent=`Exported ${data.entries.length} saved entries and ${data.schedules.length} daily schedules, including payment tracking. Keep this file to restore or transfer phones.`;
 });
 $('export-original').addEventListener('click',()=>{const original=localStorage.getItem(RECOVERY_KEY);if(original)download(original,'application/json',`rvu-daily-before-wrvu-update.json`);});
 $('export-csv').addEventListener('click',()=>{const rows=analyzeActivity(data.entries,data.schedules).rows;download('Date,Scheduled patients,Scheduled doubles,Scheduled procedures,Completed patients,Completed procedures,Completed colonoscopies,Completed doubles,Completed EGDs,Work RVUs\r\n'+rows.map(r=>[r.date,r.scheduledPatients,r.scheduledDoubles,r.scheduledProcedures,r.cases,r.completedProcedures,r.colon,r.doubles,r.egd,formatRVU(r.units)].join(',')).join('\r\n'),'text/csv',`rvu-daily-totals-${localDate()}.csv`);$('backup-status').textContent='Daily totals and schedules exported. Use the JSON backup for importing.';});
@@ -247,21 +280,21 @@ $('import-json').addEventListener('click',()=>$('import-file').click());
 $('import-file').addEventListener('change',async event=>{
   const file=event.target.files?.[0];event.target.value='';if(!file)return;
   try { if(file.size>10*1024*1024)throw new Error('Backup is too large (maximum 10 MB).');pendingImport=parseBackup(await file.text());const result=mergeData(data,pendingImport);const days=analyzeActivity(result.entries,result.schedules).days;
-    $('import-summary').textContent=`This backup contains ${pendingImport.entries.length} saved entries and ${pendingImport.schedules.length} daily schedules. After merging: ${result.entries.length} entries and ${result.schedules.length} schedules across ${days} tracked days.`;$('import-dialog').showModal();
+    $('import-summary').textContent=`This backup includes ${pendingImport.payments.length} payment records, ${pendingImport.entries.length} saved entries and ${pendingImport.schedules.length} daily schedules. After merging: ${result.entries.length} entries and ${result.schedules.length} schedules across ${days} tracked days.`;$('import-dialog').showModal();
   } catch(error){pendingImport=null;$('backup-status').textContent=error.message;}
 });
 $('cancel-import').addEventListener('click',()=>{pendingImport=null;$('import-dialog').close();});
-$('confirm-import').addEventListener('click',()=>{if(!pendingImport)return;const next=mergeData(data,pendingImport);if(saveData(next)){$('backup-status').textContent=`Import complete: ${data.entries.length} entries and ${data.schedules.length} daily schedules.`;pendingImport=null;$('import-dialog').close();toast('Backup merged.');}});
+$('confirm-import').addEventListener('click',()=>{if(!pendingImport)return;const next=mergeData(data,pendingImport);if(saveData(next)){$('backup-status').textContent=`Import complete: ${data.entries.length} entries and ${data.schedules.length} daily schedules, including payment tracking.`;pendingImport=null;$('import-dialog').close();toast('Backup merged.');}});
 $('settings-open').addEventListener('click',()=>$('settings-dialog').showModal());$('settings-close').addEventListener('click',()=>$('settings-dialog').close());
 const rateContainer=$('rates-table'),rateTable=document.createElement('table');rateTable.innerHTML='<thead><tr><th>Procedure</th><th>CPT</th><th>wRVUs</th></tr></thead>';const rateBody=document.createElement('tbody');
 for(const side of ['colon','egd'])for(const key of ['diagnostic',...TECHNIQUES]){const row=document.createElement('tr');for(const text of [`${LABELS[side]} · ${LABELS[key]}`,RATES[side][key].code,formatRVU(RATES[side][key].units)]){const cell=document.createElement('td');cell.textContent=text;row.append(cell);}rateBody.append(row);}rateTable.append(rateBody);rateContainer.append(rateTable);
 function considerUpdate(){
-  if(reloadNeeded){if(dirty||scheduleDirty||editId||pendingImport){$('update-notice').hidden=false;return;}if(!reloading){reloading=true;location.reload();}return;}
+  if(reloadNeeded){if(dirty||scheduleDirty||paymentDirty||editId||pendingImport){$('update-notice').hidden=false;return;}if(!reloading){reloading=true;location.reload();}return;}
   if(!waitingWorker)return;
-  if(dirty||scheduleDirty||editId||pendingImport){$('update-notice').hidden=false;return;}
+  if(dirty||scheduleDirty||paymentDirty||editId||pendingImport){$('update-notice').hidden=false;return;}
   waitingWorker.postMessage({type:'SKIP_WAITING'});
 }
-$('apply-update').addEventListener('click',()=>{if((dirty||scheduleDirty||editId||pendingImport)&&!confirm('Apply the update? Saved entries are safe, but your unsaved form or pending import will be cleared.'))return;if(reloadNeeded){location.reload();return;}waitingWorker?.postMessage({type:'SKIP_WAITING'});});
+$('apply-update').addEventListener('click',()=>{if((dirty||scheduleDirty||paymentDirty||editId||pendingImport)&&!confirm('Apply the update? Saved entries are safe, but your unsaved form or pending import will be cleared.'))return;if(reloadNeeded){location.reload();return;}waitingWorker?.postMessage({type:'SKIP_WAITING'});});
 if('serviceWorker'in navigator){
   navigator.serviceWorker.addEventListener('controllerchange',()=>{if(!hadController){hadController=true;return;}reloadNeeded=true;considerUpdate();});
   navigator.serviceWorker.register('./sw.js',{scope:'./',updateViaCache:'none'}).then(reg=>{
@@ -271,7 +304,7 @@ if('serviceWorker'in navigator){
   }).catch(()=>{$('update-status').textContent='Offline installation is unavailable in this browser. Saved entries still work.';});
   document.addEventListener('visibilitychange',()=>{if(!document.hidden){swRegistration?.update().catch(()=>{});considerUpdate();}});
 }
-$('check-update').addEventListener('click',async()=>{if(!swRegistration){$('update-status').textContent='Updates require an HTTPS browser that supports service workers.';return;}$('update-status').textContent='Checking…';try{await swRegistration.update();if(swRegistration.waiting){waitingWorker=swRegistration.waiting;considerUpdate();$('update-status').textContent='Update ready.';}else $('update-status').textContent=swRegistration.installing?'Downloading the new version…':'Up to date · v1.2.4';}catch{$('update-status').textContent='Could not check while offline. The app will retry when opened online.';}});
+$('check-update').addEventListener('click',async()=>{if(!swRegistration){$('update-status').textContent='Updates require an HTTPS browser that supports service workers.';return;}$('update-status').textContent='Checking…';try{await swRegistration.update();if(swRegistration.waiting){waitingWorker=swRegistration.waiting;considerUpdate();$('update-status').textContent='Update ready.';}else $('update-status').textContent=swRegistration.installing?'Downloading the new version…':'Up to date · v1.3.0';}catch{$('update-status').textContent='Could not check while offline. The app will retry when opened online.';}});
 window.addEventListener('beforeinstallprompt',event=>{event.preventDefault();installPrompt=event;$('install-app').hidden=false;});
 $('install-app').addEventListener('click',async()=>{await installPrompt?.prompt();installPrompt=null;$('install-app').hidden=true;});
 window.addEventListener('appinstalled',()=>{$('install-app').hidden=true;});

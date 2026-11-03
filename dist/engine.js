@@ -1,6 +1,6 @@
 export const RULE_VERSION = '2026-work-rvu-v2';
 export const LEGACY_RULE_VERSION = '2026-custom-50-v1';
-export const SCHEMA_VERSION = 3;
+export const SCHEMA_VERSION = 4;
 export const STORAGE_KEY = 'rvu-daily-v1';
 export const RECOVERY_KEY = 'rvu-daily-before-work-rvu-v2';
 export const RATES = Object.freeze({
@@ -47,7 +47,7 @@ export function validateEntry(e) {
 export function parseBackup(text) {
   let data;
   try { data = JSON.parse(text); } catch { throw new Error('Choose a valid RVU Daily JSON backup.'); }
-  if (data?.app !== 'rvu-daily' || ![1,2,SCHEMA_VERSION].includes(data?.schemaVersion) || !Array.isArray(data.entries) || data.entries.length > 50000) throw new Error('This is not a supported RVU Daily backup.');
+  if (data?.app !== 'rvu-daily' || ![1,2,3,SCHEMA_VERSION].includes(data?.schemaVersion) || !Array.isArray(data.entries) || data.entries.length > 50000) throw new Error('This is not a supported RVU Daily backup.');
   const entries = data.entries.map(validateEntry);
   if (new Set(entries.map(e => e.id)).size !== entries.length) throw new Error('Backup contains duplicate entry IDs.');
   const tombstones = data.tombstones ?? {};
@@ -60,7 +60,11 @@ export function parseBackup(text) {
   if (new Set(checkedSchedules.map(s => s.date)).size !== checkedSchedules.length) throw new Error('Backup contains duplicate schedule dates.');
   if (!scheduleTombstones || typeof scheduleTombstones !== 'object' || Array.isArray(scheduleTombstones)) throw new Error('Invalid deleted-schedule history.');
   for (const [date, stamp] of Object.entries(scheduleTombstones)) if (!validDate(date) || typeof stamp !== 'string' || !Number.isFinite(Date.parse(stamp))) throw new Error('Invalid deleted-schedule history.');
-  return { app:'rvu-daily', schemaVersion:SCHEMA_VERSION, entries, tombstones:{...tombstones}, schedules:checkedSchedules, scheduleTombstones:{...scheduleTombstones} };
+  const payments = data.schemaVersion < 4 ? [] : data.payments;
+  if (!Array.isArray(payments) || payments.length > 50000) throw new Error('Invalid payment tracker in backup.');
+  const checkedPayments = payments.map(validatePayment);
+  if (new Set(checkedPayments.map(p=>p.date)).size !== checkedPayments.length) throw new Error('Duplicate payment dates in backup.');
+  return { app:'rvu-daily', schemaVersion:SCHEMA_VERSION, payments:checkedPayments, entries, tombstones:{...tombstones}, schedules:checkedSchedules, scheduleTombstones:{...scheduleTombstones} };
 }
 export function mergeData(current, incoming) {
   const tombstones = Object.assign(Object.create(null), current.tombstones);
@@ -73,7 +77,9 @@ export function mergeData(current, incoming) {
   const schedules = new Map((current.schedules ?? []).map(s => [s.date,s]));
   for (const s of incoming.schedules ?? []) if (!schedules.has(s.date) || Date.parse(s.updatedAt) > Date.parse(schedules.get(s.date).updatedAt)) schedules.set(s.date,s);
   for (const [date,s] of schedules) if (scheduleTombstones[date] && Date.parse(scheduleTombstones[date]) >= Date.parse(s.updatedAt)) schedules.delete(date);
-  return { app:'rvu-daily', schemaVersion:SCHEMA_VERSION, entries:[...map.values()], tombstones, schedules:[...schedules.values()], scheduleTombstones };
+  const payments = new Map((current.payments ?? []).map(p=>[p.date,p]));
+  for(const p of incoming.payments ?? []) if(!payments.has(p.date) || Date.parse(p.updatedAt)>Date.parse(payments.get(p.date).updatedAt)) payments.set(p.date,p);
+  return { app:'rvu-daily', schemaVersion:SCHEMA_VERSION, payments:[...payments.values()], entries:[...map.values()], tombstones, schedules:[...schedules.values()], scheduleTombstones };
 }
 export function scheduledProcedures(patients, doubles) {
   if (!Number.isInteger(patients) || patients < 0 || patients > 1000) throw new Error('Scheduled patients must be a whole number from 0 to 1,000.');
@@ -130,3 +136,17 @@ export function summarize(entries, month = '') {
   return { rows, units, days: rows.length, cases: rows.reduce((n,d) => n + d.cases,0), averageUnits: rows.length ? units / rows.length : 0 };
 }
 
+
+export function validatePayment(p) {
+  if (!p || !validDate(p.date) || typeof p.manual !== 'boolean' || typeof p.updatedAt !== 'string' || !Number.isFinite(Date.parse(p.updatedAt)) || (p.paidAt !== null && (typeof p.paidAt !== 'string' || !Number.isFinite(Date.parse(p.paidAt))))) throw new Error('Invalid payment record in backup.');
+  return {date:p.date,manual:p.manual,paidAt:p.paidAt,updatedAt:p.updatedAt};
+}
+export function paymentRows(data, now = Date.now()) {
+  const logged = new Set([...data.entries.map(e=>e.date),...(data.schedules ?? []).map(s=>s.date)]);
+  const payments = new Map((data.payments ?? []).map(p=>[p.date,p]));
+  const dates = new Set([...logged,...[...payments.values()].filter(p=>p.manual || p.paidAt).map(p=>p.date)]);
+  return [...dates].sort().map(date=>{
+    const p=payments.get(date);
+    return {date,manual:p?.manual ?? false,logged:logged.has(date),paidAt:p?.paidAt ?? null,archived:!!p?.paidAt && now-Date.parse(p.paidAt)>=30*24*60*60*1000};
+  });
+}
