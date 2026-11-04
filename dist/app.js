@@ -1,4 +1,4 @@
-import { RATES, RULE_VERSION, SCHEMA_VERSION, STORAGE_KEY, RECOVERY_KEY, TECHNIQUES, LABELS, validateEntry, validateSchedule, scheduledProcedures, analyzeActivity, calculate, formatRVU, parseBackup, mergeData, summarize, validDate, paymentRows, validatePayment } from './engine.js';
+import { RATES, RULE_VERSION, SCHEMA_VERSION, STORAGE_KEY, RECOVERY_KEY, TECHNIQUES, LABELS, validateEntry, validateSchedule, scheduledProcedures, analyzeActivity, calculate, formatRVU, parseBackup, mergeData, summarize, summarizeCMSStyle, validDate, paymentRows, validatePayment } from './engine.js';
 const $ = id => document.getElementById(id);
 const dollars = new Intl.NumberFormat('en-US',{style:'currency',currency:'USD'});
 const localDate = (d = new Date()) => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
@@ -226,6 +226,14 @@ function renderAverages(){
   $('compensation-basis').textContent=summary.days?`Based on ${formatRVU(summary.averageUnits)} average wRVUs / day in this period.`:'Add completed cases to see daily estimates for this period.';
   for(const rate of [60,65,70])$('compensation-'+rate).textContent=summary.days?dollars.format(summary.averageUnits/10000*rate):'—';
   $('compensation-per-wrvu').textContent=summary.averageUnits>0?dollars.format(3500/(summary.averageUnits/10000)):'—';
+  const adjusted=summarizeCMSStyle(data.entries.filter(e=>e.date<=through),selectedMonth);
+  $('cms-basis').textContent=`${summary.days} completed-case days · same period as the full-wRVU average`;
+  for(const [id,fullValue,adjustedValue] of [
+    ['total',formatRVU(summary.units),formatRVU(adjusted.units)],
+    ['average',summary.days?formatRVU(summary.averageUnits):'—',adjusted.days?formatRVU(adjusted.averageUnits):'—'],
+    ...[60,65,70].map(rate=>[String(rate),summary.days?dollars.format(summary.averageUnits/10000*rate):'—',adjusted.days?dollars.format(adjusted.averageUnits/10000*rate):'—']),
+    ['rate',summary.averageUnits>0?dollars.format(3500/(summary.averageUnits/10000)):'—',adjusted.averageUnits>0?dollars.format(3500/(adjusted.averageUnits/10000)):'—']
+  ]){$('cms-full-'+id).textContent=fullValue;$('cms-adjusted-'+id).textContent=adjustedValue;}
   $('average-equation').textContent=`${activity.days} tracked day${activity.days===1?'':'s'} · ${activity.scheduleDays} with schedules`;renderRows('average-table',activity.rows,true);
   for(const [id,key,scheduled] of [['scheduled-patients','scheduledPatients',true],['completed-patients','cases',false],['scheduled','scheduledProcedures',true],['completed','completedProcedures',false],['colon','colon',false],['doubles','doubles',false],['egd','egd',false],['scheduled-doubles','scheduledDoubles',true]]){
     const count=scheduled?activity.scheduleDays:activity.days,value=activity.averages[key];
@@ -304,7 +312,7 @@ if('serviceWorker'in navigator){
   }).catch(()=>{$('update-status').textContent='Offline installation is unavailable in this browser. Saved entries still work.';});
   document.addEventListener('visibilitychange',()=>{if(!document.hidden){swRegistration?.update().catch(()=>{});considerUpdate();}});
 }
-$('check-update').addEventListener('click',async()=>{if(!swRegistration){$('update-status').textContent='Updates require an HTTPS browser that supports service workers.';return;}$('update-status').textContent='Checking…';try{await swRegistration.update();if(swRegistration.waiting){waitingWorker=swRegistration.waiting;considerUpdate();$('update-status').textContent='Update ready.';}else $('update-status').textContent=swRegistration.installing?'Downloading the new version…':'Up to date · v1.3.0';}catch{$('update-status').textContent='Could not check while offline. The app will retry when opened online.';}});
+$('check-update').addEventListener('click',async()=>{if(!swRegistration){$('update-status').textContent='Updates require an HTTPS browser that supports service workers.';return;}$('update-status').textContent='Checking…';try{await swRegistration.update();if(swRegistration.waiting){waitingWorker=swRegistration.waiting;considerUpdate();$('update-status').textContent='Update ready.';}else $('update-status').textContent=swRegistration.installing?'Downloading the new version…':'Up to date · v1.3.1';}catch{$('update-status').textContent='Could not check while offline. The app will retry when opened online.';}});
 window.addEventListener('beforeinstallprompt',event=>{event.preventDefault();installPrompt=event;$('install-app').hidden=false;});
 $('install-app').addEventListener('click',async()=>{await installPrompt?.prompt();installPrompt=null;$('install-app').hidden=true;});
 window.addEventListener('appinstalled',()=>{$('install-app').hidden=true;});

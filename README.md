@@ -2,6 +2,16 @@
 
 A small, local-first, installable PWA for GI work RVU tracking. Source lives in **asre1212/rvu**.
 
+## CMS-style work-only comparison (v1.3.1)
+
+Analysis adds full vs adjusted total work units, average per completed-case day, daily estimates at $60/$65/$70, and the effective rate at $3,500/day. The month/all-time filter and through-today cutoff are shared. Existing totals, entries, and payments are unchanged.
+
+The scenario subtracts the diagnostic work base for each additional technique within each scope, then credits the higher adjusted family at 100% and the other at 50% for combined EGD/colon. It applies independently per patient, including quantity. Snare + forceps colon: 4.46 + (3.47 - 3.18) = 4.75. Diagnostic colon + EGD: 3.18 + 0.5 × 2.04 = 4.20.
+
+This is explicitly a work-only approximation of CMS payment mechanics. Actual CMS ranking uses fee-schedule allowances (work + practice expense + malpractice, geographically adjusted), so ranking and payment can differ. It is not an actual Medicare reimbursement calculator or verified employer credit rule.
+
+Reviewed CMS Claims Processing Manual ch.12 §40.6, Noridian Minor Surgery and Endoscopies, and CMS PFS Overview on November 4, 2026. Sources are linked in the app.
+
 ## Payment tracker (v1.3.0)
 
 The Payment tracker tab lists one row per date with a saved case or schedule, plus manually added past or future dates. Checking Paid saves the actual check time. Paid rows automatically leave the active list after 30 elapsed days; retained archive records prevent them reappearing from logged dates. Show archived lets you review and uncheck them. Unpaid dates never expire. Manual-only dates can be removed with Undo; duplicate dates are prevented and manual dates never affect productivity averages.

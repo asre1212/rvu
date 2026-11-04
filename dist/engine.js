@@ -150,3 +150,21 @@ export function paymentRows(data, now = Date.now()) {
     return {date,manual:p?.manual ?? false,logged:logged.has(date),paidAt:p?.paidAt ?? null,archived:!!p?.paidAt && now-Date.parse(p.paidAt)>=30*24*60*60*1000};
   });
 }
+
+ // CMS-style work-only scenario, not an adjudicated Medicare payment calculation.
+ // Actual CMS ranking uses fee-schedule allowances, not work RVUs alone.
+export function calculateCMSStyle(entry) {
+  const full=calculate(entry);
+  const families=full.sides.map(side=>{
+    const base=RATES[side.side].diagnostic.units;
+    return side.units-base*Math.max(0,side.lines.length-1);
+  }).sort((a,b)=>b-a);
+  const units=families.reduce((sum,value,index)=>sum+value*(index===0?1:0.5),0);
+  return {units,totalUnits:units*(entry.quantity??1)};
+}
+export function summarizeCMSStyle(entries, month='') {
+  const included=entries.filter(e=>!month||e.date.startsWith(month));
+  const days=new Set(included.map(e=>e.date)).size;
+  const units=included.reduce((sum,e)=>sum+calculateCMSStyle(e).totalUnits,0);
+  return {units,days,averageUnits:days?units/days:0};
+}
