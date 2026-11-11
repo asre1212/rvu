@@ -1,12 +1,16 @@
 import { RATES, RULE_VERSION, SCHEMA_VERSION, STORAGE_KEY, RECOVERY_KEY, TECHNIQUES, LABELS, validateEntry, validateSchedule, scheduledProcedures, analyzeActivity, calculate, formatRVU, parseBackup, mergeData, summarize, summarizeCMSStyle, validDate, paymentRows, validatePayment } from './engine.js';
+import { annualSalary } from './salary.js';
 const $ = id => document.getElementById(id);
 const dollars = new Intl.NumberFormat('en-US',{style:'currency',currency:'USD'});
+const annualDollars = new Intl.NumberFormat('en-US',{style:'currency',currency:'USD',maximumFractionDigits:0});
+const annualRVUs = new Intl.NumberFormat('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});
 const localDate = (d = new Date()) => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
 const dateLabel = (date, options) => new Date(date+'T12:00:00').toLocaleDateString('en-US',options);
 const emptyData = () => ({ app:'rvu-daily',schemaVersion:SCHEMA_VERSION,entries:[],tombstones:{},schedules:[],scheduleTombstones:{},payments:[] });
 const blankDraft = type => ({type,lower:[],upper:[],quantity:1});
 const newId = () => crypto.randomUUID ? crypto.randomUUID() : Array.from(crypto.getRandomValues(new Uint8Array(16)),n=>n.toString(16).padStart(2,'0')).join('');
 let data = emptyData(), selectedDate = localDate(), month = selectedDate.slice(0,7), tab = 'journal';
+$('salary-year').value = Math.min(2100, new Date().getFullYear() + 1);
 let draft = blankDraft('colon'), editId = null, dirty = false, pendingImport = null;
 let paymentDirty = false;
 let scheduleDirty = false, scheduleDate = null;
@@ -218,6 +222,34 @@ function renderRows(id,rows,detailed=false){
   });
 }
 function renderDaily(){ $('daily-month').textContent=monthLabel();renderRows('daily-totals',analyzeActivity(data.entries,data.schedules,{month}).rows); }
+function renderSalary(summary, adjusted) {
+  const year = Number($('salary-year').value);
+  const valid = $('salary-year').value.trim() !== '' && Number.isInteger(year) && year >= 2021 && year <= 2100;
+  $('salary-year').setAttribute('aria-invalid', String(!valid));
+  $('salary-error').textContent = valid ? '' : 'Choose a year from 2021 to 2100.';
+  $('salary-results').hidden = !valid;
+  if (!valid) return;
+  const full = annualSalary(summary.days ? summary.averageUnits / 10000 : null, year);
+  const cms = annualSalary(adjusted.days ? adjusted.averageUnits / 10000 : null, year);
+  const calendar = full.calendar;
+  $('salary-basis').textContent = summary.days
+    ? `Uses this period’s ${summary.days} completed-case day${summary.days === 1 ? '' : 's'} and unrounded daily averages.`
+    : 'Add completed cases in this period to see annual salary estimates.';
+  $('salary-calendar').textContent = `${year}: ${calendar.weekdays} weekdays − ${calendar.holidays.length} observed holidays − ${calendar.vacationDays} vacation days = ${calendar.workdays} working days.`;
+  $('salary-equation').textContent = `Annual RVUs = ${calendar.averageDays} Mon–Thu days × daily average + ${calendar.fridayDays} Fridays × 30 (${annualRVUs.format(full.fridayRVUs)} RVUs).`;
+  for (const [scenario, result] of [['full', full], ['adjusted', cms]]) {
+    for (const [id, value, formatter] of [
+      ['average', result.averageRVUs, annualRVUs], ['annual', result.annualRVUs, annualRVUs],
+      ['excess', result.excessRVUs, annualRVUs], ['bonus', result.bonus, annualDollars], ['total', result.salary, annualDollars]
+    ]) $('salary-' + scenario + '-' + id).textContent = value === null ? '—' : formatter.format(value);
+  }
+  const list = $('salary-holidays'); list.replaceChildren();
+  for (const holiday of calendar.holidays) {
+    const item = document.createElement('li');
+    item.textContent = `${dateLabel(holiday.date,{month:'short',day:'numeric'})} · ${holiday.name}`;
+    list.append(item);
+  }
+}
 function renderAverages(){
   const selectedMonth=$('average-period').value==='month'?month:'',through=localDate();
   const summary=summarize(data.entries.filter(e=>e.date<=through),selectedMonth),activity=analyzeActivity(data.entries,data.schedules,{month:selectedMonth,through});
@@ -234,6 +266,7 @@ function renderAverages(){
     ...[60,65,70].map(rate=>[String(rate),summary.days?dollars.format(summary.averageUnits/10000*rate):'—',adjusted.days?dollars.format(adjusted.averageUnits/10000*rate):'—']),
     ['rate',summary.averageUnits>0?dollars.format(3500/(summary.averageUnits/10000)):'—',adjusted.averageUnits>0?dollars.format(3500/(adjusted.averageUnits/10000)):'—']
   ]){$('cms-full-'+id).textContent=fullValue;$('cms-adjusted-'+id).textContent=adjustedValue;}
+  renderSalary(summary, adjusted);
   $('average-equation').textContent=`${activity.days} tracked day${activity.days===1?'':'s'} · ${activity.scheduleDays} with schedules`;renderRows('average-table',activity.rows,true);
   for(const [id,key,scheduled] of [['scheduled-patients','scheduledPatients',true],['completed-patients','cases',false],['scheduled','scheduledProcedures',true],['completed','completedProcedures',false],['colon','colon',false],['doubles','doubles',false],['egd','egd',false],['scheduled-doubles','scheduledDoubles',true]]){
     const count=scheduled?activity.scheduleDays:activity.days,value=activity.averages[key];
@@ -245,6 +278,7 @@ function renderAverages(){
   days.forEach(day=>{const column=document.createElement('div');column.className='bar-column';column.setAttribute('aria-label',`${day.date}: ${formatRVU(day.units)} wRVUs`);const track=document.createElement('div');track.className='bar-track';const bar=document.createElement('div');bar.className='bar';bar.style.height=`${day.units/max*100}%`;const value=document.createElement('small');value.textContent=formatRVU(day.units);bar.append(value);track.append(bar);const date=document.createElement('span');date.textContent=dateLabel(day.date,{month:'numeric',day:'numeric'});column.append(track,date);trend.append(column);});
 }
 $('average-period').addEventListener('change',renderAverages);
+$('salary-year').addEventListener('input',renderAverages);
 function render(){renderCalendar();renderEntries();renderSchedule();renderDaily();renderAverages();renderPayments();}
 function savePayment(date, changes) {
   const prior=data.payments.find(p=>p.date===date) ?? {date,manual:false,paidAt:null};
@@ -312,7 +346,7 @@ if('serviceWorker'in navigator){
   }).catch(()=>{$('update-status').textContent='Offline installation is unavailable in this browser. Saved entries still work.';});
   document.addEventListener('visibilitychange',()=>{if(!document.hidden){swRegistration?.update().catch(()=>{});considerUpdate();}});
 }
-$('check-update').addEventListener('click',async()=>{if(!swRegistration){$('update-status').textContent='Updates require an HTTPS browser that supports service workers.';return;}$('update-status').textContent='Checking…';try{await swRegistration.update();if(swRegistration.waiting){waitingWorker=swRegistration.waiting;considerUpdate();$('update-status').textContent='Update ready.';}else $('update-status').textContent=swRegistration.installing?'Downloading the new version…':'Up to date · v1.3.1';}catch{$('update-status').textContent='Could not check while offline. The app will retry when opened online.';}});
+$('check-update').addEventListener('click',async()=>{if(!swRegistration){$('update-status').textContent='Updates require an HTTPS browser that supports service workers.';return;}$('update-status').textContent='Checking…';try{await swRegistration.update();if(swRegistration.waiting){waitingWorker=swRegistration.waiting;considerUpdate();$('update-status').textContent='Update ready.';}else $('update-status').textContent=swRegistration.installing?'Downloading the new version…':'Up to date · v1.4.0';}catch{$('update-status').textContent='Could not check while offline. The app will retry when opened online.';}});
 window.addEventListener('beforeinstallprompt',event=>{event.preventDefault();installPrompt=event;$('install-app').hidden=false;});
 $('install-app').addEventListener('click',async()=>{await installPrompt?.prompt();installPrompt=null;$('install-app').hidden=true;});
 window.addEventListener('appinstalled',()=>{$('install-app').hidden=true;});

@@ -1,7 +1,7 @@
-const VERSION = '4700d7d0ddc09c0d';
+const VERSION = '7fbfae551bea1673';
 const PREFIX = 'rvu-daily-shell-';
 const CACHE = PREFIX + VERSION;
-const FILES = ['./','./index.html','./styles.css','./app.js','./engine.js','./manifest.webmanifest','./icon.svg','./icon-192.png','./icon-512.png'];
+const FILES = ['./','./index.html','./styles.css','./app.js','./engine.js','./salary.js','./manifest.webmanifest','./icon.svg','./icon-192.png','./icon-512.png'];
 self.addEventListener('install', event => { event.waitUntil(caches.open(CACHE).then(cache => cache.addAll(FILES))); });
 self.addEventListener('message', event => { if (event.data?.type === 'SKIP_WAITING') self.skipWaiting(); });
 self.addEventListener('activate', event => { event.waitUntil((async () => { for (const key of await caches.keys()) if (key.startsWith(PREFIX) && key !== CACHE) await caches.delete(key); await self.clients.claim(); })()); });

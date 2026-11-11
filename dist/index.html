@@ -80,6 +80,32 @@
           <p class="muted compensation-note">This scenario ranks by work units. CMS actually ranks by fee-schedule allowances, including practice expense, malpractice and geographic adjustments; actual ranking and payment can differ. These are not Medicare payment amounts or confirmed employer compensation credits. Separate lesions/sites are assumed as entered.</p>
           <p class="muted compensation-note"><a href="https://med.noridianmedicare.com/web/jfb/specialties/surgery/minor-surgery-and-endoscopies" target="_blank" rel="noreferrer">CMS contractor rules</a> · <a href="https://www.cms.gov/regulations-and-guidance/guidance/manuals/downloads/clm104c12.pdf" target="_blank" rel="noreferrer">CMS manual §40.6</a></p>
         </section>
+        <section class="panel compensation-panel salary-panel" aria-labelledby="salary-heading">
+          <div class="panel-top"><h2 id="salary-heading">Annualized salary</h2><label class="salary-year-label" for="salary-year">Year<input id="salary-year" type="number" min="2021" max="2100" step="1" inputmode="numeric" aria-describedby="salary-error"></label></div>
+          <p id="salary-error" class="field-error" role="status"></p>
+          <div id="salary-results" aria-live="polite">
+            <p id="salary-basis" class="muted table-note"></p>
+            <table class="cms-table salary-table" aria-label="Annual salary: full and CMS-style adjusted RVUs">
+              <thead><tr><th scope="col">Annual model</th><th scope="col">Full wRVUs</th><th scope="col">CMS-style adjusted</th></tr></thead>
+              <tbody>
+                <tr><th scope="row">Average RVUs / day</th><td id="salary-full-average">—</td><td id="salary-adjusted-average">—</td></tr>
+                <tr><th scope="row">Projected annual RVUs</th><td id="salary-full-annual">—</td><td id="salary-adjusted-annual">—</td></tr>
+                <tr><th scope="row">RVUs above 8,000</th><td id="salary-full-excess">—</td><td id="salary-adjusted-excess">—</td></tr>
+                <tr><th scope="row">Base salary</th><td>$520,000</td><td>$520,000</td></tr>
+                <tr><th scope="row">Incentive at $63 / RVU</th><td id="salary-full-bonus">—</td><td id="salary-adjusted-bonus">—</td></tr>
+                <tr class="salary-total"><th scope="row">Annual salary</th><td id="salary-full-total">—</td><td id="salary-adjusted-total">—</td></tr>
+              </tbody>
+            </table>
+            <p id="salary-calendar" class="muted compensation-note"></p>
+            <p id="salary-equation" class="muted compensation-note"></p>
+            <p class="muted compensation-note">Salary = $520,000 + $63 × RVUs above 8,000; no reduction below the threshold. The fifth weekday is Friday, at 30 RVUs in both scenarios. Four vacation weeks remove 16 Mon–Thu days and 4 Fridays, in addition to holidays. Weekends, holidays and vacation generate zero RVUs.</p>
+            <details class="salary-details"><summary>Holidays & assumptions</summary>
+              <ul id="salary-holidays"></ul>
+              <p class="muted compensation-note">Observed nationwide federal holidays: Saturday holidays move to Friday; Sunday holidays move to Monday. Vacation does not overlap these days. Projection year is independent of the average’s selected period. CMS-style uses the existing work-only adjustment above; the fixed Friday amount is already 30 credited RVUs. Gross estimates; salary and incentive display to the nearest dollar, with no intermediate rounding.</p>
+              <p class="muted compensation-note">Holiday references: <a href="https://www.opm.gov/policy-data-oversight/pay-leave/federal-holidays/" target="_blank" rel="noreferrer">OPM</a> · <a href="https://uscode.house.gov/view.xhtml?req=granuleid:USC-prelim-title5-section6103&amp;num=0&amp;edition=prelim" target="_blank" rel="noreferrer">5 USC §6103</a> · <a href="https://www.gsa.gov/buy-through-us/shared-services/hr-and-payroll-services/payroll-calendars/2027-payroll-calendar" target="_blank" rel="noreferrer">GSA 2027 calendar</a></p>
+            </details>
+          </div>
+        </section>
         <section class="panel activity-panel" aria-labelledby="activity-heading">
           <div class="panel-top"><h2 id="activity-heading">Patients & procedures per day</h2></div>
           <p class="muted table-note">Daily averages for the selected period, with total counts below.</p>
@@ -109,7 +135,7 @@
         </section>
       </section>
     </main>
-    <footer>Saved on your device <span>·</span> 2026 work RVUs · Full code values <span>·</span> <span id="app-version">v1.3.1</span></footer>
+    <footer>Saved on your device <span>·</span> 2026 work RVUs · Full code values <span>·</span> <span id="app-version">v1.4.0</span></footer>
   </div>
   <dialog id="settings-dialog"><div class="dialog-header"><h2>Rules & backup</h2><button id="settings-close" class="icon-button" aria-label="Close settings">×</button></div><div class="dialog-content">
     <section><h3>Work RVU rules</h3><p>2026 work RVUs for completed EGD and colonoscopy, before any employer-specific adjustments.</p><ul><li>Count each separately reportable code at <strong>100% of its work RVUs</strong>. EGD + colonoscopy are added in full. No 50% payment cuts or diagnostic-base subtraction.</li><li>For a single lesion, select only the final technique: snare includes its biopsy, and EMR includes its biopsy/snare. Do not select component techniques for that same lesion.</li><li>Selecting multiple techniques means they were performed on <strong>separate lesions/sites</strong> and are independently reportable. They count automatically, with no extra confirmation. Modifier 59/XS may be required for distinct services; it does not change the published work-RVU value.</li><li>One code per technique per scope, even for multiple biopsies or polyps. Diagnostic work is already included in a therapeutic code. “Cases” means identical patient encounters, not lesions.</li><li>Select upper and lower techniques independently. Biopsies in both scopes count once in each scope.</li><li>Averages = total work RVUs ÷ dates with saved entries. Empty dates are excluded.</li></ul><p class="note">Cold forceps only; hot forceps use different codes. These are full work-RVU values, not a claim or payment estimate. Incomplete procedures, screening HCPCS codes, sedation and other interventions are outside this quick-entry model.</p><p class="note">Older entries are recalculated with full work RVUs. Multiple techniques in existing entries are also treated as separate lesions/sites, as requested. Your entries, dates and case counts are preserved; a pre-update backup is kept on this device.</p><details><summary>2026 rates & sources</summary><div id="rates-table"></div><p><a href="https://www.cms.gov/medicare/payment/fee-schedules/physician/pfs-relative-value-files/rvu26d" target="_blank" rel="noreferrer">CMS October 2026 work RVU file</a><br><a href="https://www.cms.gov/files/document/06-chapter6-ncci-medicare-policy-manual-2026-final.pdf" target="_blank" rel="noreferrer">CMS 2026 NCCI digestive-system rules</a><br><a href="https://www.cms.gov/medicare-coverage-database/view/article.aspx?articleId=53399" target="_blank" rel="noreferrer">CMS separate-lesion guidance</a><br><a href="https://www.asge.org/docs/default-source/education/Technology_Reviews/doc-endoscopic_mucosal_resection_aip.pdf" target="_blank" rel="noreferrer">ASGE EMR component bundling</a></p></details></section>

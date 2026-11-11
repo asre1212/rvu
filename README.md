@@ -2,6 +2,20 @@
 
 A small, local-first, installable PWA for GI work RVU tracking. Source lives in **asre1212/rvu**.
 
+## Annualized salary (v1.4.0)
+
+Analysis compares two annual salary scenarios: **full work RVUs** and the existing **CMS-style adjusted work RVUs**. Each uses its own unrounded average per completed-case day in the selected month/all-time period, through today. The projection year is independent and defaults to next year (2027 at release); years 2021–2100 are selectable. Empty periods show no projected RVUs, incentive or salary.
+
+- Monday–Thursday: the corresponding scenario's daily average. Friday: **30 credited RVUs** in both scenarios. No weekend RVUs.
+- Exclude observed nationwide federal holidays, including a next-year New Year's holiday observed on December 31. Saturday holidays move to Friday; Sunday holidays to Monday.
+- Take **four additional vacation weeks**: 16 Mon–Thu days and four Fridays, without holiday overlap. Holidays and vacation produce zero RVUs.
+- Annual salary = **$520,000 + $63 × max(0, annual RVUs − 8,000)**. The base is retained below the threshold. No intermediate rounding; salary/incentive display to the nearest dollar.
+- For 2027: **261 weekdays − 12 holidays − 20 vacation days = 229 workdays**: 184 average days + 45 Fridays. Annual RVUs = 184 × daily average + 1,350. At 50 RVUs/day, that is 10,550 RVUs, a $160,650 incentive and **$680,650 total**.
+
+The CMS-style scenario keeps the existing work-only approximation; the fixed Friday credit is not reduced again. This adds a projection only; saved cases, schedules, payments, storage keys, backup schema and existing RVU rules are unchanged. The salary module is cached for offline use.
+
+Holiday references reviewed November 11, 2026: [OPM federal holidays](https://www.opm.gov/policy-data-oversight/pay-leave/federal-holidays/), [5 USC §6103](https://uscode.house.gov/view.xhtml?req=granuleid:USC-prelim-title5-section6103&num=0&edition=prelim), and the [GSA 2027 payroll calendar](https://www.gsa.gov/buy-through-us/shared-services/hr-and-payroll-services/payroll-calendars/2027-payroll-calendar). The model covers the recurring nationwide holidays, not DC-only Inauguration Day or future one-off closures.
+
 ## CMS-style work-only comparison (v1.3.1)
 
 Analysis adds full vs adjusted total work units, average per completed-case day, daily estimates at $60/$65/$70, and the effective rate at $3,500/day. The month/all-time filter and through-today cutoff are shared. Existing totals, entries, and payments are unchanged.
